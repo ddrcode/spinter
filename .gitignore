@@ -1,0 +1,6 @@
+/target
+.direnv/
+tests/target
+tests/bin
+rom/*.bin
+

@@ -1,0 +1,270 @@
+use super::{CircuitCtx, PinMessage};
+use crate::emulator::EmulatorError;
+use crossbeam_channel::Sender;
+use std::cell::{OnceCell, RefCell};
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum PinDirection {
+    Input,
+    Output,
+}
+
+impl Default for PinDirection {
+    fn default() -> Self {
+        PinDirection::Input
+    }
+}
+
+impl From<bool> for PinDirection {
+    fn from(value: bool) -> Self {
+        if value {
+            PinDirection::Output
+        } else {
+            PinDirection::Input
+        }
+    }
+}
+
+impl Into<bool> for PinDirection {
+    fn into(self) -> bool {
+        self == PinDirection::Output
+    }
+}
+
+impl Into<u8> for PinDirection {
+    fn into(self) -> u8 {
+        if self == PinDirection::Output {
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Pin {
+    id: OnceCell<u8>,
+    inner_id: OnceCell<u32>,
+    name: String,
+    group_id: OnceCell<u8>,
+    value: RefCell<bool>,
+    enabled: RefCell<bool>,
+    direction: RefCell<PinDirection>,
+    tri_state: bool,
+    io: bool,
+    ctx: OnceCell<CircuitCtx>,
+}
+
+impl Into<u8> for Pin {
+    fn into(self) -> u8 {
+        self.state().into()
+    }
+}
+
+impl Pin {
+    pub fn new(name: &str, direction: PinDirection, tri_state: bool, io: bool) -> Self {
+        Pin {
+            id: OnceCell::new(),
+            inner_id: OnceCell::new(),
+            name: name.to_string(),
+            group_id: OnceCell::new(),
+            value: RefCell::new(false),
+            enabled: RefCell::new(true),
+            direction: RefCell::new(direction),
+            tri_state,
+            io,
+            ctx: OnceCell::new(),
+        }
+    }
+
+    pub fn input(name: &str) -> Self {
+        Pin::new(name, PinDirection::Input, false, false)
+    }
+
+    pub fn output(name: &str) -> Self {
+        Pin::new(name, PinDirection::Output, false, false)
+    }
+
+    pub fn set_id(&self, id: u8) {
+        self.id.set(id).unwrap();
+    }
+
+    pub fn set_group_id(&self, id: u8) {
+        self.group_id.set(id).unwrap();
+    }
+
+    pub fn set_enable(&self, val: bool) -> Result<(), EmulatorError> {
+        if !self.tri_state {
+            return Err(EmulatorError::NotATriStatePin);
+        }
+        *self.enabled.borrow_mut() = val;
+        Ok(())
+    }
+
+    pub fn read(&self) -> bool {
+        self.state()
+    }
+
+    pub fn val(&self) -> u8 {
+        self.state().into()
+    }
+
+    pub fn high(&self) -> bool {
+        self.state()
+    }
+
+    pub fn low(&self) -> bool {
+        !self.state()
+    }
+
+    pub fn name(&self) -> String {
+        let name = &self.name;
+        let group_id = self.group_id();
+        if group_id.is_some() {
+            format!("{}{}", name, group_id.unwrap())
+        } else {
+            name.to_string()
+        }
+    }
+
+    pub fn group_name(&self) -> Option<String> {
+        let group_id = self.group_id();
+        if group_id.is_some() {
+            Some(self.name.clone())
+        } else {
+            None
+        }
+    }
+
+    pub fn is_output(&self) -> bool {
+        self.direction() == PinDirection::Output
+    }
+
+    pub fn is_io(&self) -> bool {
+        self.io
+    }
+
+    pub fn set_high(&self) -> Result<bool, EmulatorError> {
+        self.write(true)
+    }
+
+    pub fn set_low(&self) -> Result<bool, EmulatorError> {
+        self.write(false)
+    }
+
+    pub fn toggle(&self) -> Result<bool, EmulatorError> {
+        let v = self.state();
+        self.write(!v)
+    }
+
+    pub fn enabled(&self) -> bool {
+        *self.enabled.borrow()
+    }
+
+    pub fn state(&self) -> bool {
+        *self.value.borrow()
+    }
+
+    pub fn direction(&self) -> PinDirection {
+        *self.direction.borrow()
+    }
+
+    pub fn write(&self, val: bool) -> Result<bool, EmulatorError> {
+        if !self.enabled() {
+            Ok(false)
+        } else if self.is_output() {
+            if *self.value.borrow() == val {
+                return Ok(false);
+            }
+            *self.value.borrow_mut() = val;
+            if let Some(ctx) = self.ctx.get() {
+                ctx.sender
+                    .send(PinMessage::new(&ctx.component_name, &self.name(), val))
+                    .unwrap();
+            }
+            Ok(true)
+        } else {
+            Err(EmulatorError::CantWriteToReadPin(self.name()))
+        }
+    }
+
+    pub(crate) fn set_val(&self, val: bool) {
+        if !self.is_output() {
+            *self.value.borrow_mut() = val;
+        }
+    }
+
+    pub fn set_direction(&self, dir: PinDirection) -> Result<(), EmulatorError> {
+        if self.io {
+            *self.direction.borrow_mut() = dir;
+            Ok(())
+        } else {
+            Err(EmulatorError::CantChangePinDirection(self.name()))
+        }
+    }
+
+    pub fn id(&self) -> Option<u8> {
+        self.id.get().copied()
+    }
+
+    pub fn group_id(&self) -> Option<u8> {
+        self.group_id.get().copied()
+    }
+
+    pub fn tri_state(&self) -> bool {
+        self.tri_state
+    }
+
+    pub fn enable(&self) -> Result<(), EmulatorError> {
+        self.set_enable(true)
+    }
+
+    pub fn disable(&self) -> Result<(), EmulatorError> {
+        self.set_enable(false)
+    }
+
+    pub fn inner_id(&self) -> Option<u32> {
+        self.inner_id.get().copied()
+    }
+
+    pub(crate) fn set_inner_id(&self, id: u32) {
+        let _ = self.inner_id.set(id);
+    }
+
+    pub(crate) fn set_context(&self, ctx: CircuitCtx) {
+        self.ctx.set(ctx).unwrap();
+    }
+}
+
+pub trait PinStateChange {
+    fn on_state_change(&mut self, pin: &Pin);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use PinDirection::*;
+
+    #[test]
+    fn test_direction_change() {
+        let pin = Pin::new("A", Input, false, true);
+        assert_eq!(Input, pin.direction());
+        assert_eq!(0u8, pin.direction().into());
+        assert_eq!(false, pin.direction().into());
+
+        let res = pin.set_direction(Output);
+        assert!(res.is_ok());
+        assert_eq!(Output, pin.direction());
+        assert_eq!(1u8, pin.direction().into());
+        assert_eq!(true, pin.direction().into());
+    }
+
+    #[test]
+    fn test_direction_change_err() {
+        let pin = Pin::new("A", Input, false, false);
+        assert_eq!(Input, pin.direction());
+        let res = pin.set_direction(Output);
+        assert!(res.is_err());
+        assert_eq!(Input, pin.direction());
+    }
+}
