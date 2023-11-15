@@ -6,11 +6,11 @@ use std::num::Wrapping;
 pub fn execute_operation(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
     match &*op.fn_name {
         "op_arithmetic" => op_arithmetic(cpu, op, val),
-        //     "op_bit" => op_bit(op, machine),
+        "op_bit" => op_bit(cpu, op, val),
         "op_bitwise" => op_bitwise(cpu, op, val),
-        //     "op_branch" => op_branch(op, machine),
+        "op_branch" => op_branch(cpu, op, val),
         //     "op_brk" => op_brk(op, machine),
-        //     "op_compare" => op_compare(op, machine),
+        "op_compare" => op_compare(cpu, op, val),
         //     "op_flag" => op_flag(op, machine),
         //     "op_incdec_mem" => op_incdec_mem(op, machine),
         //     "op_incdec_reg" => op_incdec_reg(op, machine),
@@ -25,7 +25,7 @@ pub fn execute_operation(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
         //     "op_rti" => op_rti(op, machine),
         //     "op_rts" => op_rts(op, machine),
         //     "op_shift" => op_shift(op, machine),
-        //     "op_store" => op_store(op, machine),
+        "op_store" => op_store(cpu, op, val),
         //     "op_transfer" => op_transfer(op, machine),
         _ => panic!("Unidentified function name {}", op.fn_name),
     }
@@ -121,38 +121,35 @@ fn op_arithmetic(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
     );
     res
 }
-//
-// fn op_bit(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = get_val(op, machine).unwrap();
-//     set_flags(
-//         "NZV",
-//         &[neg(val), zero(val & machine.A8()), val & 0b01000000 > 0],
-//         machine,
-//     );
-//     op.def.cycles
-// }
-//
-// fn op_branch(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let branch: bool = match op.def.mnemonic {
-//         BCC => !machine.P().carry,
-//         BCS => machine.P().carry,
-//         BNE => !machine.P().zero,
-//         BEQ => machine.P().zero,
-//         BPL => !machine.P().negative,
-//         BMI => machine.P().negative,
-//         BVC => !machine.P().overflow,
-//         BVS => machine.P().overflow,
-//         _ => panic!("{} is not a branch operation", op.def.mnemonic),
-//     };
-//     if branch {
-//         machine.set_PC(op.address.unwrap());
-//         return op.def.cycles + 1; // TODO consider page change
-//     }
-//
-//     // BVC always takes 3 cycles (see https://c64os.com/post/6502instructions)
-//     op.def.cycles + if op.def.mnemonic == BVC { 1 } else { 0 }
-// }
-//
+
+fn op_bit(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+    set_flags(
+        "NZV",
+        &[neg(val), zero(val & cpu.a()), val & 0b01000000 > 0],
+        cpu,
+    );
+    val
+}
+
+fn op_branch(cpu: &mut CpuState, op: &OperationDef, _val: u8) -> u8 {
+    let branch: bool = match op.mnemonic {
+        BCC => !cpu.carry(),
+        BCS => cpu.carry(),
+        BNE => !cpu.zero(),
+        BEQ => cpu.zero(),
+        BPL => !cpu.negative(),
+        BMI => cpu.negative(),
+        BVC => !cpu.overflow(),
+        BVS => cpu.overflow(),
+        _ => panic!("{} is not a branch operation", op.mnemonic),
+    };
+
+    // BVC always takes 3 cycles (see https://c64os.com/post/6502instructions)
+    // op.def.cycles + if op.def.mnemonic == BVC { 1 } else { 0 }
+
+    branch.into()
+}
+
 // // see https://www.c64-wiki.com/wiki/BRK
 // fn op_brk(op: &Operation, machine: &mut impl Machine) -> u8 {
 //     machine.set_PC(machine.PC().wrapping_add(2));
@@ -161,20 +158,19 @@ fn op_arithmetic(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 //     op.def.cycles
 // }
 //
-// // TODO add cycle for page change
-// fn op_compare(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = get_val(op, machine).unwrap();
-//     let reg = match op.def.mnemonic {
-//         CMP => machine.A8(),
-//         CPX => machine.X8(),
-//         CPY => machine.Y8(),
-//         _ => panic!("{} is not a compare operation", op.def.mnemonic),
-//     };
-//     let diff = (Wrapping(reg) - Wrapping(val)).0;
-//     set_flags("NZC", &[neg(diff), reg == val, reg >= val], machine);
-//     op.def.cycles
-// }
-//
+// TODO add cycle for page change
+fn op_compare(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+    let reg = match op.mnemonic {
+        CMP => cpu.a(),
+        CPX => cpu.x(),
+        CPY => cpu.y(),
+        _ => panic!("{} is not a compare operation", op.mnemonic),
+    };
+    let diff = reg.wrapping_sub(val);
+    set_flags("NZC", &[neg(diff), reg == val, reg >= val], cpu);
+    diff
+}
+
 // fn op_incdec_mem(op: &Operation, machine: &mut impl Machine) -> u8 {
 //     let mut val = Wrapping(get_val(op, machine).unwrap());
 //     match op.def.mnemonic {
@@ -326,16 +322,16 @@ fn op_load(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 //     set_flags("NZC", &[neg(res), zero(res), carry], machine);
 //     op.def.cycles
 // }
-//
-// fn op_store(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     match op.def.mnemonic {
-//         STA => store_byte(machine.A8(), op, machine),
-//         STX => store_byte(machine.X8(), op, machine),
-//         STY => store_byte(machine.Y8(), op, machine),
-//         _ => panic!("{} is not a store operation", op.def.mnemonic),
-//     }
-// }
-//
+
+fn op_store(cpu: &mut CpuState, op: &OperationDef, _val: u8) -> u8 {
+    match op.mnemonic {
+        STA => cpu.a(),
+        STX => cpu.x(),
+        STY => cpu.y(),
+        _ => panic!("{} is not a store operation", op.mnemonic),
+    }
+}
+
 // fn op_transfer(op: &Operation, machine: &mut impl Machine) -> u8 {
 //     match op.def.mnemonic {
 //         TAX => machine.set_X(machine.A()),

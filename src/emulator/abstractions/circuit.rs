@@ -1,8 +1,10 @@
+use crate::debugger::DebugMessage;
+
 use super::Component;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::Range;
+use std::ops::{Range, Deref};
 use std::thread;
 use std::time::Duration;
 
@@ -48,6 +50,10 @@ impl CircuitCtx {
             sender,
             receiver,
         }
+    }
+
+    pub fn debug(&self, msg: DebugMessage) {
+        println!("{}", msg);
     }
 }
 
@@ -162,7 +168,6 @@ impl CircuitBuilder {
                     let pin = comp.get_pin(&msg.pin).unwrap();
                     if pin.state() != msg.val {
                         pin.set_val(msg.val);
-                        println!("Receiving: {:?}", msg);
                         comp.on_pin_state_change(&msg.pin, msg.val);
                     }
                 }

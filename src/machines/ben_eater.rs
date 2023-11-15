@@ -88,7 +88,6 @@ impl Machine for BenEaterMachine {
                     TryRecvError::Empty => {
                         threshold -= 1;
                         if threshold == 0 {
-                            println!();
                             break;
                         }
                         continue;
@@ -99,7 +98,6 @@ impl Machine for BenEaterMachine {
                 }
             }
             let msg = res.unwrap();
-            println!("Sending: {:?}", msg);
             if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
                 for (comp, pin) in links.iter() {
                     self.circuit.components[comp]

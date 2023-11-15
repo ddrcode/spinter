@@ -258,7 +258,6 @@ impl<T: RAM + 'static> Component for HM62256B<T> {
                 }
             }
         }
-        println!("{:?}", &self.pins);
     }
 }
 

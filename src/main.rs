@@ -4,6 +4,7 @@ extern crate lazy_static;
 pub mod emulator;
 pub mod machines;
 pub mod utils;
+pub mod debugger;
 
 use anyhow::Result;
 use emulator::abstractions::Machine;
