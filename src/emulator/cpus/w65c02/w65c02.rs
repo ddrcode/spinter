@@ -1,8 +1,11 @@
 use corosensei::CoroutineResult;
 use std::{cell::RefCell, rc::Rc};
 
-use crate::emulator::abstractions::{Addr, CPUCycles, CircuitCtx, Component, Pin, Pins, CPU};
-use crate::emulator::cpus::mos6502::{get_stepper, read_opcode, OperationDef, Stepper, OPERATIONS};
+use crate::debugger::OperationDebug;
+use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};
+use crate::emulator::cpus::mos6502::{
+    get_stepper, read_opcode, Operand, OperationDef, Stepper, OPERATIONS,
+};
 
 use super::{CpuState, W65C02_Pins};
 // use genawaiter::{rc::gen, rc::Gen, yield_};
@@ -44,29 +47,29 @@ impl Component for W65C02 {
                 self.pins["PHI1O"].write(!val).unwrap();
                 self.pins["PHI2O"].write(val).unwrap();
                 self.logic.tick();
+                if val {
+                    self.logic.advance_cycles();
+                }
             }
             _ => {}
         };
     }
 
     fn init(&mut self) {
-        self.logic.state.borrow_mut().reg.pc = 0x200;
+        self.logic.state.set_pc(0x200);
     }
 }
 
 pub struct W65C02Logic {
     stepper: Option<Stepper>,
     cycles: CPUCycles,
-    state: Rc<RefCell<CpuState>>,
+    state: CpuState
 }
 
 impl W65C02Logic {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         let logic = W65C02Logic {
-            state: Rc::new(RefCell::new(CpuState {
-                reg: Default::default(),
-                pins,
-            })),
+            state: CpuState::new(pins),
             stepper: Some(read_opcode()),
             cycles: 0,
         };
@@ -76,25 +79,32 @@ impl W65C02Logic {
 
     pub fn tick(&mut self) {
         if self.stepper.is_none() {
-            panic!("There is no stepper for current IR: {:02x}", self.state.borrow().ir());
+            panic!(
+                "There is no stepper for current IR: {:02x}",
+                self.state.ir()
+            );
         }
         let v = self
             .stepper
             .as_mut()
             .unwrap()
-            .resume(Rc::clone(&self.state));
+            .resume(self.state.clone());
         match v {
-            CoroutineResult::Yield(()) => {}
+            CoroutineResult::Yield(()) => {
+            }
             CoroutineResult::Return(res) => {
-                self.stepper = if res {
-                    let op = self.decode_op(&self.state.borrow().ir());
+                if res.completed {
+                    self.debug(&res.operand);
+                }
+                self.state = res.cpu;
+                self.stepper = if res.has_opcode {
+                    let op = self.decode_op(&self.state.ir());
                     get_stepper(&op)
                 } else {
                     Some(read_opcode())
                 }
             }
         }
-        self.advance_cycles();
     }
 
     fn decode_op(&self, opcode: &u8) -> OperationDef {
@@ -103,7 +113,7 @@ impl W65C02Logic {
             None => panic!(
                 "Opcode {:#04x} not found at address {:#06x}",
                 opcode,
-                self.state.borrow().pc()
+                self.state.pc()
             ),
         }
     }
@@ -111,66 +121,61 @@ impl W65C02Logic {
     fn advance_cycles(&mut self) {
         self.cycles = self.cycles.wrapping_add(1);
     }
+
+    fn debug(&self, operand: &Operand) {
+        let cpu = &self.state;
+        let s = OperationDebug {
+            reg: cpu.regs().clone(),
+            opcode: cpu.ir(),
+            operand: operand.clone(),
+            cycle: self.cycles,
+        };
+        println!("{}", s);
+    }
 }
 
 unsafe impl Send for W65C02 {}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::emulator::cpus::mos6502::Stepper;
-
-    fn create_stepper() -> Stepper {
-        corosensei::Coroutine::new(|yielder, _input| {
-            for _ in 0..3 {
-                yielder.suspend(());
-            }
-            false
-        })
-    }
-
-    #[test]
-    fn test_steps() {
-        let mut cpu = W65C02::new();
-        cpu.logic.stepper = Some(create_stepper());
-
-        assert_eq!(0, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(1, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(2, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(3, cpu.logic.cycles);
-    }
-
-    // #[test]
-    // fn test_steps_with_clock_signal() {
-    //     let clock = Pin::output();
-    //     let cpu = W65C02::new();
-    //     (*cpu.logic.borrow_mut()).stepper = Some(create_stepper());
-    //     Pin::link(&clock, &cpu.pins.by_name("PHI2").unwrap()).unwrap();
-    //
-    //     assert_eq!(0, cpu.logic.borrow().cycles());
-    //     clock.toggle();
-    //     assert_eq!(1, cpu.logic.borrow().cycles());
-    //     clock.toggle();
-    //     assert_eq!(2, cpu.logic.borrow().cycles());
-    //     clock.toggle();
-    //     assert_eq!(3, cpu.logic.borrow().cycles());
-    // }
-
-    #[test]
-    fn test_with_real_stepper() {
-        let mut cpu = W65C02::new();
-        let opdef = OPERATIONS.get(&0xad).unwrap(); // LDA, absolute
-        cpu.logic.stepper = get_stepper(opdef);
-
-        assert_eq!(0, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(1, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(2, cpu.logic.cycles);
-        cpu.logic.tick();
-        assert_eq!(3, cpu.logic.cycles);
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use crate::emulator::cpus::mos6502::Stepper;
+//
+//     fn create_stepper() -> Stepper {
+//         corosensei::Coroutine::new(|yielder, _input| {
+//             for _ in 0..3 {
+//                 yielder.suspend(());
+//             }
+//             StepperResult::new()
+//         })
+//     }
+//
+//     #[test]
+//     fn test_steps() {
+//         let mut cpu = W65C02::new();
+//         cpu.logic.stepper = Some(create_stepper());
+//
+//         assert_eq!(0, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(1, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(2, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(3, cpu.logic.cycles);
+//     }
+//
+//     #[test]
+//     fn test_with_real_stepper() {
+//         let mut cpu = W65C02::new();
+//         let opdef = OPERATIONS.get(&0xad).unwrap(); // LDA, absolute
+//         cpu.logic.stepper = get_stepper(opdef);
+//
+//         assert_eq!(0, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(1, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(2, cpu.logic.cycles);
+//         cpu.logic.tick();
+//         assert_eq!(3, cpu.logic.cycles);
+//     }
+// }

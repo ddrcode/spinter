@@ -3,7 +3,7 @@ use crate::emulator::cpus::CpuState;
 use std::num::Wrapping;
 
 // OMG this is so terribly ugly!
-pub fn execute_operation(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     match &*op.fn_name {
         "op_arithmetic" => op_arithmetic(cpu, op, val),
         "op_bit" => op_bit(cpu, op, val),
@@ -61,7 +61,7 @@ pub fn execute_operation(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 //     op.def.cycles
 // }
 //
-fn set_flags(flags: &str, vals: &[bool], cpu: &mut CpuState) {
+fn set_flags(flags: &str, vals: &[bool], cpu: &CpuState) {
     let chars = String::from(flags);
     if chars.len() != vals.len() {
         panic!("Incorrect args length in set_flags")
@@ -81,7 +81,7 @@ fn set_flags(flags: &str, vals: &[bool], cpu: &mut CpuState) {
     }
 }
 
-fn set_nz_flags(val: u8, cpu: &mut CpuState) {
+fn set_nz_flags(val: u8, cpu: &CpuState) {
     cpu.set_negative(neg(val));
     cpu.set_zero(zero(val));
 }
@@ -104,7 +104,7 @@ fn overflow(in1: u8, in2: u8, result: u8) -> bool {
 // // https://www.righto.com/2012/12/the-6502-overflow-flag-explained.html
 // // http://retro.hansotten.nl/uploads/mag6502/sbc_tsx_txs_instructions.pdf
 // // TODO compute cycles for page cross
-fn op_arithmetic(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_arithmetic(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     let a = cpu.a();
     let val = match op.mnemonic {
         ADC => val,
@@ -122,7 +122,7 @@ fn op_arithmetic(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
     res
 }
 
-fn op_bit(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_bit(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     set_flags(
         "NZV",
         &[neg(val), zero(val & cpu.a()), val & 0b01000000 > 0],
@@ -131,7 +131,7 @@ fn op_bit(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
     val
 }
 
-fn op_branch(cpu: &mut CpuState, op: &OperationDef, _val: u8) -> u8 {
+fn op_branch(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
     let branch: bool = match op.mnemonic {
         BCC => !cpu.carry(),
         BCS => cpu.carry(),
@@ -159,7 +159,7 @@ fn op_branch(cpu: &mut CpuState, op: &OperationDef, _val: u8) -> u8 {
 // }
 //
 // TODO add cycle for page change
-fn op_compare(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_compare(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     let reg = match op.mnemonic {
         CMP => cpu.a(),
         CPX => cpu.x(),
@@ -201,11 +201,11 @@ fn op_compare(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 // }
 //
 // TODO add cycle for page change
-fn op_bitwise(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_bitwise(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     match op.mnemonic {
-        AND => cpu.reg.a &= val,
-        ORA => cpu.reg.a |= val,
-        EOR => cpu.reg.a ^= val,
+        AND => cpu.set_a(cpu.a() & val),
+        ORA => cpu.set_a(cpu.a() | val),
+        EOR => cpu.set_a(cpu.a() ^ val),
         _ => panic!("{} is not a bitwise operation", op.mnemonic),
     };
     let a = cpu.a();
@@ -241,7 +241,7 @@ fn op_bitwise(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 // }
 //
 // // FIXME add cycle for crossing page boundary
-fn op_load(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_load(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     match op.mnemonic {
         LDA => cpu.set_a(val),
         LDX => cpu.set_x(val),
@@ -323,7 +323,7 @@ fn op_load(cpu: &mut CpuState, op: &OperationDef, val: u8) -> u8 {
 //     op.def.cycles
 // }
 
-fn op_store(cpu: &mut CpuState, op: &OperationDef, _val: u8) -> u8 {
+fn op_store(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
     match op.mnemonic {
         STA => cpu.a(),
         STX => cpu.x(),

@@ -8,7 +8,7 @@ use super::disassemble;
 pub struct OperationDebug {
     pub reg: Registers,
     pub opcode: u8,
-    pub operand: Option<Operand>,
+    pub operand: Operand,
     pub cycle: Cycles
 }
 

@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Clone, Debug)]
 pub enum Operand {
+    None,
     Byte(u8),
     Word(u16),
 }
@@ -33,6 +34,7 @@ impl Operand {
 impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            Operand::None => write!(f, ""),
             Operand::Byte(x) => write!(f, "{:02x}", x),
             Operand::Word(x) => write!(f, "{:04x}", x),
         }

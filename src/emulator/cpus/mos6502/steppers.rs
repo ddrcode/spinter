@@ -1,18 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::debugger::OperationDebug;
-use crate::emulator::cpus::mos6502::AddressMode::*;
+use crate::emulator::abstractions::PinDirection;
+use crate::emulator::cpus::mos6502::{AddressMode::*, OperationDef};
 use crate::emulator::cpus::CpuState;
-use corosensei::{Coroutine, CoroutineResult};
-
-use crate::emulator::abstractions::{Addr, PinDirection, CPU};
-use crate::emulator::cpus::mos6502::{OperationDef, OPERATIONS};
+use corosensei::Coroutine;
 
 use super::{execute_operation, Operand};
 
-pub type Input = Rc<RefCell<CpuState>>;
-pub type Stepper = Coroutine<Input, (), bool>;
+pub type Input = CpuState;
+pub type Stepper = Coroutine<Input, (), StepperResult>;
 
 pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
     use crate::emulator::cpus::mos6502::mnemonic::Mnemonic::*;
@@ -38,13 +35,40 @@ pub fn read_opcode() -> Stepper {
             yielder.suspend(());
         }
 
-        true
+        StepperResult::partial(true, cpu.clone())
     })
+}
+
+pub struct StepperResult {
+    pub has_opcode: bool,
+    pub cpu: Input,
+    pub operand: Operand,
+    pub completed: bool,
+}
+
+impl StepperResult {
+    pub fn new(has_opcode: bool, cpu: Input, operand: Operand) -> Self {
+        Self {
+            has_opcode,
+            cpu,
+            operand,
+            completed: true,
+        }
+    }
+
+    fn partial(has_opcode: bool, cpu: Input) -> Self {
+        Self {
+            has_opcode,
+            cpu,
+            operand: Operand::None,
+            completed: false,
+        }
+    }
 }
 
 fn read_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let opr: Option<Operand>;
+        let opr: Operand;
 
         request_read_from_pc(&cpu);
         yielder.suspend(());
@@ -59,28 +83,27 @@ fn read_stepper(op: OperationDef) -> Stepper {
             let hi = read_and_inc_pc(&cpu);
             yielder.suspend(());
 
-            opr = Some(Operand::Word(u16::from_le_bytes([lo, hi])));
+            opr = Operand::Word(u16::from_le_bytes([lo, hi]));
             hi
         } else {
-            opr = Some(Operand::Byte(lo));
+            opr = Operand::Byte(lo);
             0
         };
 
         request_read_from_addr(&cpu, lo, hi);
         yielder.suspend(());
 
-        let val = cpu.borrow().pins.data.read();
-        execute_operation(&mut cpu.borrow_mut(), &op, val);
+        let val = cpu.pins.data.read();
+        execute_operation(&cpu, &op, val);
         yielder.suspend(());
 
-        debug(&cpu, opr);
-        false
+        StepperResult::new(false, cpu.clone(), opr)
     })
 }
 
 fn write_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let opr: Option<Operand>;
+        let opr: Operand;
 
         request_read_from_pc(&cpu);
         yielder.suspend(());
@@ -95,22 +118,21 @@ fn write_stepper(op: OperationDef) -> Stepper {
             let hi = read_and_inc_pc(&cpu);
             yielder.suspend(());
 
-            opr = Some(Operand::Word(u16::from_le_bytes([lo, hi])));
+            opr = Operand::Word(u16::from_le_bytes([lo, hi]));
             hi
         } else {
-            opr = Some(Operand::Byte(lo));
+            opr = Operand::Byte(lo);
             0
         };
 
         request_write_to_addr(&cpu, lo, hi);
         yielder.suspend(());
 
-        let val = execute_operation(&mut cpu.borrow_mut(), &op, 0);
-        cpu.borrow().pins.data.write(val);
+        let val = execute_operation(&cpu, &op, 0);
+        cpu.pins.data.write(val);
         yielder.suspend(());
 
-        debug(&cpu, opr);
-        false
+        StepperResult::new(false, cpu.clone(), opr)
     })
 }
 
@@ -136,35 +158,36 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         request_read_from_pc(&cpu);
         yielder.suspend(());
 
-        let shift = cpu.borrow().pins.data.read();
+        let shift = cpu.pins.data.read();
+        let opr = Operand::Byte(shift);
         yielder.suspend(());
 
-        let branch = execute_operation(&mut cpu.borrow_mut(), &op, shift) > 0;
+        let branch = execute_operation(&cpu, &op, shift) > 0;
         if !branch {
-            cpu.borrow_mut().inc_pc();
-            return false;
+            cpu.inc_pc();
+            return StepperResult::new(false, cpu.clone(), opr);
         }
         let [lo, hi] = {
             let o = shift as i8;
-            (((cpu.borrow().pc() as i64 + o as i64) & 0xffff) as u16).to_le_bytes()
+            (((cpu.pc() as i64 + o as i64) & 0xffff) as u16).to_le_bytes()
         };
-        cpu.borrow_mut().set_pcl(lo);
+        cpu.set_pcl(lo);
         yielder.suspend(());
 
         // FIXME the operation below sets SYNC pin to hi. TBC whether it should happen
         request_opcode(&cpu);
         yielder.suspend(());
 
-        if cpu.borrow().pch() == hi {
+        if cpu.pch() == hi {
             read_opcode_and_inc_pc(&cpu);
             yielder.suspend(());
-            return true;
+            return StepperResult::new(true, cpu.clone(), opr);
         } else {
             // fix PC and exit, so the next cycle starts with fetching correct opcode
-            cpu.borrow_mut().set_pch(hi);
+            cpu.set_pch(hi);
         }
 
-        false
+        StepperResult::new(false, cpu.clone(), opr)
     })
 }
 
@@ -172,7 +195,7 @@ fn branch_stepper(op: OperationDef) -> Stepper {
 // Utils
 
 fn request_read_from_pc(cpu_ref: &Input) {
-    let cpu = cpu_ref.borrow();
+    let cpu = cpu_ref;
     cpu.pins
         .set_data_direction(PinDirection::Input)
         .addr
@@ -181,7 +204,7 @@ fn request_read_from_pc(cpu_ref: &Input) {
 
 fn request_read_from_addr(cpu: &Input, lo: u8, hi: u8) {
     let addr = u16::from_le_bytes([lo, hi]);
-    cpu.borrow()
+    cpu
         .pins
         .set_data_direction(PinDirection::Input)
         .addr
@@ -189,14 +212,14 @@ fn request_read_from_addr(cpu: &Input, lo: u8, hi: u8) {
 }
 
 fn read_and_inc_pc(cpu: &Input) -> u8 {
-    let val = cpu.borrow().pins.data.read();
-    cpu.borrow_mut().inc_pc();
+    let val = cpu.pins.data.read();
+    cpu.inc_pc();
     val
 }
 
 fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
     let addr = u16::from_le_bytes([lo, hi]);
-    cpu.borrow()
+    cpu
         .pins
         .set_data_direction(PinDirection::Output)
         .addr
@@ -204,7 +227,7 @@ fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
 }
 
 fn request_opcode(cpu: &Input) {
-    let cpu = cpu.borrow();
+    let cpu = cpu;
     cpu.pins
         .set_sync(true)
         .set_data_direction(PinDirection::Input)
@@ -213,7 +236,7 @@ fn request_opcode(cpu: &Input) {
 }
 
 fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
-    let mut cpu = cpu.borrow_mut();
+    let mut cpu = cpu;
     let opcode = cpu.pins.data.read();
     cpu.inc_pc();
     cpu.set_ir(opcode);
@@ -221,15 +244,6 @@ fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
     opcode
 }
 
-fn debug(cpu: &Input, operand: Option<Operand>) {
-    let s = OperationDebug {
-        reg: cpu.borrow().reg.clone(),
-        opcode: cpu.borrow().ir(),
-        operand,
-        cycle: 0,
-    };
-    println!("{}", s);
-}
 
 // fn read_stepper(op: OperationDef) -> Stepper {
 //     Coroutine::new(move |yielder, cpu: Input| {
@@ -245,8 +259,8 @@ fn debug(cpu: &Input, operand: Option<Operand>) {
 //         };
 //
 //         let (val, _) = read_from_addr(&cpu, lo, hi);
-//         // cpu.borrow_mut().execute(val);
-//         execute_operation(&mut cpu.borrow_mut(), &op, val);
+//         // cpu.execute(val);
+//         execute_operation(&mut cpu, &op, val);
 //         yielder.suspend(());
 //
 //         false

@@ -16,7 +16,7 @@ pub fn disassemble(op: &OperationDebug, verbose: bool, next_op: bool) -> String 
         o.unwrap()
     };
     let addr_correction = if_else(next_op, 0u16, def.len().into());
-    let addr = op.reg.pc.wrapping_sub(addr_correction);
+    let addr = op.reg.pc.borrow().wrapping_sub(addr_correction);
     let val = operand_to_bytes_string(&op.operand);
     let opstr = op_to_string(&def, &op.operand);
     let _ = write!(
@@ -31,13 +31,9 @@ pub fn disassemble(op: &OperationDebug, verbose: bool, next_op: bool) -> String 
     out
 }
 
-fn op_to_string(def: &OperationDef, operand: &Option<Operand>) -> String {
+fn op_to_string(def: &OperationDef, operand: &Operand) -> String {
     let m = def.mnemonic.to_string();
-    let o = if let Some(x) = operand {
-        x.to_string()
-    } else {
-        String::from("")
-    };
+    let o = operand.to_string();
     match def.address_mode {
         Implicit => format!("{}", m),
         Accumulator => format!("{} A", m),
@@ -55,15 +51,12 @@ fn op_to_string(def: &OperationDef, operand: &Option<Operand>) -> String {
     }
 }
 
-fn operand_to_bytes_string(operand: &Option<Operand>) -> String {
+fn operand_to_bytes_string(operand: &Operand) -> String {
     let blank = "  ";
-    let (lo, hi) = if let Some(x) = operand {
-        match x {
-            Operand::Byte(x) => (format!("{:02x}", x), blank.to_string()),
-            Operand::Word(x) => (format!("{:02x}", x & 0xff), format!("{:02x}", x >> 8)),
-        }
-    } else {
-        (blank.to_string(), blank.to_string())
+    let (lo, hi) = match operand {
+        Operand::None => (blank.to_string(), blank.to_string()),
+        Operand::Byte(x) => (format!("{:02x}", x), blank.to_string()),
+        Operand::Word(x) => (format!("{:02x}", x & 0xff), format!("{:02x}", x >> 8)),
     };
     format!("{lo} {hi}")
 }
