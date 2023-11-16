@@ -75,6 +75,11 @@ impl CpuState {
     }
 
     #[inline]
+    pub fn sp(&self) -> u8 {
+        *self.reg.sp.borrow()
+    }
+
+    #[inline]
     pub fn pc(&self) -> u16 {
         *self.reg.pc.borrow()
     }
@@ -124,6 +129,11 @@ impl CpuState {
     #[inline]
     pub fn set_y(&self, val: u8) {
         *self.reg.y.borrow_mut() = val;
+    }
+
+    #[inline]
+    pub fn set_sp(&self, val: u8) {
+        *self.reg.sp.borrow_mut() = val;
     }
 
     #[inline]

@@ -4,7 +4,7 @@ use super::Component;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::{Range, Deref};
+use std::ops::{Deref, Range};
 use std::thread;
 use std::time::Duration;
 
@@ -151,27 +151,30 @@ impl CircuitBuilder {
                 comp.get_pin(pin).unwrap().set_context(ctx.clone());
             }
 
-            let tid = thread::spawn(move || {
-                comp.attach(ctx);
-                thread::sleep(Duration::from_millis(500));
-                comp.init();
-                loop {
-                    let msg_res = comp.ctx().receiver.recv();
-                    if let Err(e) = msg_res {
-                        println!(
-                            "Reading msg failed in {} with {:?}",
-                            comp.ctx().component_name,
-                            e
-                        );
+            let tid = thread::Builder::new()
+                .name(name.clone())
+                .spawn(move || {
+                    comp.attach(ctx);
+                    thread::sleep(Duration::from_millis(500));
+                    comp.init();
+                    loop {
+                        let msg_res = comp.ctx().receiver.recv();
+                        if let Err(e) = msg_res {
+                            println!(
+                                "Reading msg failed in {} with {:?}",
+                                comp.ctx().component_name,
+                                e
+                            );
+                        }
+                        let msg = msg_res.unwrap();
+                        let pin = comp.get_pin(&msg.pin).unwrap();
+                        if pin.state() != msg.val {
+                            pin.set_val(msg.val);
+                            comp.on_pin_state_change(&msg.pin, msg.val);
+                        }
                     }
-                    let msg = msg_res.unwrap();
-                    let pin = comp.get_pin(&msg.pin).unwrap();
-                    if pin.state() != msg.val {
-                        pin.set_val(msg.val);
-                        comp.on_pin_state_change(&msg.pin, msg.val);
-                    }
-                }
-            });
+                })
+                .unwrap();
 
             components.insert(
                 name.to_string(),
@@ -187,7 +190,7 @@ impl CircuitBuilder {
             components,
             receiver,
             sender,
-            state: RefCell::new(false)
+            state: RefCell::new(false),
         }
     }
 }
@@ -205,15 +208,14 @@ pub struct Circuit {
     pub(crate) components: HashMap<String, CircuitNode>,
     pub(crate) receiver: Receiver<PinMessage>,
     pub(crate) sender: Sender<PinMessage>,
-    state: RefCell<bool>
+    // FIXME use Oscilator (X1) instead
+    state: RefCell<bool>,
 }
 
 impl Circuit {
     pub fn tick(&self) {
         let val = *self.state.borrow();
-        self.sender
-            .send(PinMessage::new("X1", "OUT", val))
-            .unwrap();
+        self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
         *self.state.borrow_mut() = !val;
     }
 }

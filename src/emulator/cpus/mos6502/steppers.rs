@@ -13,14 +13,20 @@ pub type Stepper = Coroutine<Input, (), StepperResult>;
 
 pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
     use crate::emulator::cpus::mos6502::mnemonic::Mnemonic::*;
-    match op.mnemonic {
-        LDA | LDX | LDY | EOR | AND | ORA | ADC | SBC | CMP | CPX | CPY | BIT => {
-            Some(read_stepper(op.clone()))
-        }
-        STA | STX | STY => Some(write_stepper(op.clone())),
-        BCC | BCS | BNE | BEQ | BPL | BMI | BVC | BVS => Some(branch_stepper(op.clone())),
-        _ => None,
-    }
+
+    let s = match op.address_mode {
+        Implicit | Accumulator | Immediate => no_mem_stepper(op.clone()),
+        Relative => branch_stepper(op.clone()),
+        _ => match op.mnemonic {
+            LDA | LDX | LDY | EOR | AND | ORA | ADC | SBC | CMP | CPX | CPY | BIT => {
+                read_stepper(op.clone())
+            }
+            STA | STX | STY => write_stepper(op.clone()),
+            _ => return None,
+        },
+    };
+
+    Some(s)
 }
 
 pub fn read_opcode() -> Stepper {
@@ -64,6 +70,50 @@ impl StepperResult {
             completed: false,
         }
     }
+}
+
+/// Stepper for no-memory-access operations.
+/// All operations with implicit and accumulator addressing modes
+/// are handled by this stepper. Additionally, as the CPU for reads the next
+/// byte anyway for these addressing modes, the stepper also handles the
+/// immediate addressing.
+///
+/// ```text
+/// Accumulator or implied addressing
+///       #  address R/W description
+///      --- ------- --- -----------------------------------------------
+///       1    PC     R  fetch opcode, increment PC
+///       2    PC     R  read next instruction byte (and throw it away)
+///
+/// Immediate addressing
+///
+///       #  address R/W description
+///      --- ------- --- ------------------------------------------
+///       1    PC     R  fetch opcode, increment PC
+///       2    PC     R  fetch value, increment PC
+/// ```
+fn no_mem_stepper(op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let mut opr = Operand::None;
+
+        request_read_from_pc(&cpu);
+        yielder.suspend(());
+
+        let val = match op.address_mode {
+            Accumulator => cpu.a(),
+            Immediate => {
+                cpu.inc_pc();
+                let o = cpu.pins.data.read();
+                opr = Operand::Byte(o);
+                o
+            },
+            _ => 0
+        };
+        execute_operation(&cpu, &op, val);
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), opr)
+    })
 }
 
 fn read_stepper(op: OperationDef) -> Stepper {
@@ -204,8 +254,7 @@ fn request_read_from_pc(cpu_ref: &Input) {
 
 fn request_read_from_addr(cpu: &Input, lo: u8, hi: u8) {
     let addr = u16::from_le_bytes([lo, hi]);
-    cpu
-        .pins
+    cpu.pins
         .set_data_direction(PinDirection::Input)
         .addr
         .write(addr);
@@ -219,8 +268,7 @@ fn read_and_inc_pc(cpu: &Input) -> u8 {
 
 fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
     let addr = u16::from_le_bytes([lo, hi]);
-    cpu
-        .pins
+    cpu.pins
         .set_data_direction(PinDirection::Output)
         .addr
         .write(addr);
@@ -243,7 +291,6 @@ fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
     cpu.pins.set_sync(false);
     opcode
 }
-
 
 // fn read_stepper(op: OperationDef) -> Stepper {
 //     Coroutine::new(move |yielder, cpu: Input| {

@@ -11,7 +11,7 @@ pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
         "op_branch" => op_branch(cpu, op, val),
         //     "op_brk" => op_brk(op, machine),
         "op_compare" => op_compare(cpu, op, val),
-        //     "op_flag" => op_flag(op, machine),
+        "op_flag" => op_flag(cpu, op, val),
         //     "op_incdec_mem" => op_incdec_mem(op, machine),
         //     "op_incdec_reg" => op_incdec_reg(op, machine),
         //     "op_jmp" => op_jmp(op, machine),
@@ -26,7 +26,7 @@ pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
         //     "op_rts" => op_rts(op, machine),
         //     "op_shift" => op_shift(op, machine),
         "op_store" => op_store(cpu, op, val),
-        //     "op_transfer" => op_transfer(op, machine),
+        "op_transfer" => op_transfer(cpu, op, val),
         _ => panic!("Unidentified function name {}", op.fn_name),
     }
 }
@@ -212,21 +212,21 @@ fn op_bitwise(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     set_nz_flags(a, cpu);
     a
 }
-//
-// fn op_flag(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     match op.def.mnemonic {
-//         CLC => machine.cpu_mut().registers.status.carry = false,
-//         SEC => machine.cpu_mut().registers.status.carry = true,
-//         CLI => machine.cpu_mut().registers.status.interrupt_disable = false,
-//         SEI => machine.cpu_mut().registers.status.interrupt_disable = true,
-//         CLD => machine.cpu_mut().registers.status.decimal_mode = false,
-//         SED => machine.cpu_mut().registers.status.decimal_mode = true,
-//         CLV => machine.cpu_mut().registers.status.overflow = false,
-//         _ => panic!("{} is not a flag set/unset operation", op.def.mnemonic),
-//     };
-//     op.def.cycles
-// }
-//
+
+fn op_flag(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
+    match op.mnemonic {
+        CLC => cpu.set_carry(false),
+        SEC => cpu.set_carry(true),
+        CLI => cpu.set_interrupt_disable(false),
+        SEI => cpu.set_interrupt_disable(true),
+        CLD => cpu.set_decimal_mode(false),
+        SED => cpu.set_decimal_mode(true),
+        CLV => cpu.set_overflow(false),
+        _ => panic!("{} is not a flag set/unset operation", op.mnemonic),
+    };
+    0
+}
+
 // fn op_jmp(op: &Operation, machine: &mut impl Machine) -> u8 {
 //     machine.set_PC(op.address.unwrap());
 //     op.def.cycles
@@ -332,22 +332,22 @@ fn op_store(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
     }
 }
 
-// fn op_transfer(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     match op.def.mnemonic {
-//         TAX => machine.set_X(machine.A()),
-//         TAY => machine.set_Y(machine.A()),
-//         TXA => machine.set_A(machine.X()),
-//         TYA => machine.set_A(machine.Y()),
-//         TXS => machine.set_SC(machine.X()),
-//         TSX => machine.set_X(machine.SC()),
-//         _ => panic!("{} is not a transfer operation", op.def.mnemonic),
-//     };
-//     if op.def.mnemonic != TXS {
-//         // TXS doesn't change any flag
-//         set_nz_flags(machine.A8(), machine);
-//     }
-//     op.def.cycles
-// }
+fn op_transfer(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
+    match op.mnemonic {
+        TAX => cpu.set_x(cpu.a()),
+        TAY => cpu.set_y(cpu.a()),
+        TXA => cpu.set_a(cpu.x()),
+        TYA => cpu.set_a(cpu.y()),
+        TXS => cpu.set_sp(cpu.x()),
+        TSX => cpu.set_x(cpu.sp()),
+        _ => panic!("{} is not a transfer operation", op.mnemonic),
+    };
+    if op.mnemonic != TXS {
+        // TXS doesn't change any flag
+        set_nz_flags(cpu.a(), cpu);
+    }
+    0
+}
 //
 // #[cfg(test)]
 // mod tests {

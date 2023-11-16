@@ -60,17 +60,20 @@ impl Component for W65C02 {
     }
 }
 
+//--------------------------------------------------------------------
+// W65C02Logic
+
 pub struct W65C02Logic {
-    stepper: Option<Stepper>,
+    stepper: Stepper,
     cycles: CPUCycles,
-    state: CpuState
+    state: CpuState,
 }
 
 impl W65C02Logic {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         let logic = W65C02Logic {
             state: CpuState::new(pins),
-            stepper: Some(read_opcode()),
+            stepper: read_opcode(),
             cycles: 0,
         };
 
@@ -78,20 +81,9 @@ impl W65C02Logic {
     }
 
     pub fn tick(&mut self) {
-        if self.stepper.is_none() {
-            panic!(
-                "There is no stepper for current IR: {:02x}",
-                self.state.ir()
-            );
-        }
-        let v = self
-            .stepper
-            .as_mut()
-            .unwrap()
-            .resume(self.state.clone());
+        let v = self.stepper.resume(self.state.clone());
         match v {
-            CoroutineResult::Yield(()) => {
-            }
+            CoroutineResult::Yield(()) => {}
             CoroutineResult::Return(res) => {
                 if res.completed {
                     self.debug(&res.operand);
@@ -99,9 +91,16 @@ impl W65C02Logic {
                 self.state = res.cpu;
                 self.stepper = if res.has_opcode {
                     let op = self.decode_op(&self.state.ir());
-                    get_stepper(&op)
+                    let s = get_stepper(&op);
+                    if s.is_none() {
+                        panic!(
+                            "There is no stepper for current IR: {:#02x}",
+                            self.state.ir()
+                        );
+                    }
+                    s.unwrap()
                 } else {
-                    Some(read_opcode())
+                    read_opcode()
                 }
             }
         }
