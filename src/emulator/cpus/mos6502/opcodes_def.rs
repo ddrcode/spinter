@@ -4,6 +4,10 @@ lazy_static! {
     pub static ref OPERATIONS: OpsMap = define_operations();
 }
 
+pub fn mnemonic_from_opcode(opcode: u8) -> Option<Mnemonic> {
+    OPERATIONS.get(&opcode).map(|o| o.mnemonic)
+}
+
 // sources:
 // https://c64os.com/post/6502instructions
 // https://www.masswerk.at/6502/6502_instruction_set.html

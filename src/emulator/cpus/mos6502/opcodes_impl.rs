@@ -12,19 +12,16 @@ pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
         //     "op_brk" => op_brk(op, machine),
         "op_compare" => op_compare(cpu, op, val),
         "op_flag" => op_flag(cpu, op, val),
-        //     "op_incdec_mem" => op_incdec_mem(op, machine),
-        //     "op_incdec_reg" => op_incdec_reg(op, machine),
-        //     "op_jmp" => op_jmp(op, machine),
-        //     "op_jsr" => op_jsr(op, machine),
+        "op_incdec_mem" => op_incdec_mem(cpu, op, val),
+        "op_incdec_reg" => op_incdec_reg(cpu, op, val),
         "op_load" => op_load(cpu, op, val),
         //     "op_nop" => op_nop(op, machine),
         //     "op_pla" => op_pla(op, machine),
-        //     "op_plp" => op_plp(op, machine),
-        //     "op_push" => op_push(op, machine),
-        //     "op_rotate" => op_rotate(op, machine),
+        "op_plp" => op_plp(cpu, op, val),
+        "op_push" => op_push(cpu, op, val),
+        "op_rotate" => op_rotate(cpu, op, val),
         //     "op_rti" => op_rti(op, machine),
-        //     "op_rts" => op_rts(op, machine),
-        //     "op_shift" => op_shift(op, machine),
+        "op_shift" => op_shift(cpu, op, val),
         "op_store" => op_store(cpu, op, val),
         "op_transfer" => op_transfer(cpu, op, val),
         _ => panic!("Unidentified function name {}", op.fn_name),
@@ -34,33 +31,6 @@ pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
 // ----------------------------------------------------------------------
 // helpers
 
-// fn get_val(op: &Operation, machine: &impl Machine) -> Option<u8> {
-//     if let Some(addr) = op.address {
-//         Some(machine.get_byte(addr))
-//     } else if op.def.address_mode == Immediate {
-//         op.operand.as_ref().unwrap().get_byte()
-//     } else if op.def.address_mode == Accumulator {
-//         Some(machine.A8())
-//     } else {
-//         None
-//     }
-// }
-//
-// fn set_val(val: u8, op: &Operation, machine: &mut impl Machine) {
-//     if let Some(addr) = op.address {
-//         machine.set_byte(addr, val)
-//     } else if op.def.address_mode == Accumulator {
-//         machine.set_A(val)
-//     } else {
-//         panic!("Can't set value for address mode {}", op.def.address_mode)
-//     };
-// }
-//
-// fn store_byte(val: u8, op: &Operation, machine: &mut impl Machine) -> u8 {
-//     machine.set_byte(op.address.unwrap(), val);
-//     op.def.cycles
-// }
-//
 fn set_flags(flags: &str, vals: &[bool], cpu: &CpuState) {
     let chars = String::from(flags);
     if chars.len() != vals.len() {
@@ -171,35 +141,33 @@ fn op_compare(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     diff
 }
 
-// fn op_incdec_mem(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let mut val = Wrapping(get_val(op, machine).unwrap());
-//     match op.def.mnemonic {
-//         DEC => val -= 1,
-//         INC => val += 1,
-//         _ => panic!("{} is not a inc/dec (mem) operation", op.def.mnemonic),
-//     };
-//     set_val(val.0, op, machine);
-//     set_nz_flags(val.0, machine);
-//     op.def.cycles
-// }
-//
-// fn op_incdec_reg(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     match op.def.mnemonic {
-//         DEX => machine.cpu_mut().registers.x -= 1,
-//         DEY => machine.cpu_mut().registers.y -= 1,
-//         INX => machine.cpu_mut().registers.x += 1,
-//         INY => machine.cpu_mut().registers.y += 1,
-//         _ => panic!("{} is not a inc/dec operation", op.def.mnemonic),
-//     };
-//     let val = match op.def.mnemonic {
-//         DEX | INX => machine.X8(),
-//         DEY | INY => machine.Y8(),
-//         _ => panic!("{} is not a inc/dec operation", op.def.mnemonic),
-//     };
-//     set_nz_flags(val, machine);
-//     op.def.cycles
-// }
-//
+fn op_incdec_mem(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+    let new_val = match op.mnemonic {
+        DEC => val.wrapping_sub(1),
+        INC => val.wrapping_add(1),
+        _ => panic!("{} is not a inc/dec (mem) operation", op.mnemonic),
+    };
+    set_nz_flags(new_val, cpu);
+    new_val
+}
+
+fn op_incdec_reg(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
+    match op.mnemonic {
+        DEX => cpu.set_x(cpu.x().wrapping_sub(1)),
+        DEY => cpu.set_y(cpu.y().wrapping_sub(1)),
+        INX => cpu.set_x(cpu.x().wrapping_add(1)),
+        INY => cpu.set_y(cpu.y().wrapping_add(1)),
+        _ => panic!("{} is not a inc/dec operation", op.mnemonic),
+    };
+    let val = match op.mnemonic {
+        DEX | INX => cpu.x(),
+        DEY | INY => cpu.y(),
+        _ => panic!("{} is not a inc/dec operation", op.mnemonic),
+    };
+    set_nz_flags(val, cpu);
+    val
+}
+
 // TODO add cycle for page change
 fn op_bitwise(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     match op.mnemonic {
@@ -227,19 +195,6 @@ fn op_flag(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
     0
 }
 
-// fn op_jmp(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     machine.set_PC(op.address.unwrap());
-//     op.def.cycles
-// }
-//
-// fn op_jsr(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let pc = machine.PC().wrapping_sub(1);
-//     machine.push((pc >> 8) as u8);
-//     machine.push((pc & 0x00ff) as u8);
-//     machine.set_PC(op.address.unwrap());
-//     op.def.cycles
-// }
-//
 // // FIXME add cycle for crossing page boundary
 fn op_load(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     match op.mnemonic {
@@ -262,42 +217,33 @@ fn op_load(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
 //     set_nz_flags(val, machine);
 //     op.def.cycles
 // }
-//
-// fn op_plp(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = machine.pop();
-//     machine.cpu_mut().registers.status = ProcessorStatus::from(val);
-//     op.def.cycles
-// }
-//
-// fn op_push(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val: u8 = match op.def.mnemonic {
-//         PHA => machine.A8(),
-//         PHP => machine.P().into(),
-//         _ => panic!("{} is not a push operation", op.def.mnemonic),
-//     };
-//     let addr = machine.stack_addr();
-//     machine.set_byte(addr, val);
-//     machine.cpu_mut().registers.stack -= 1;
-//     op.def.cycles
-// }
-//
-// fn op_rotate(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = get_val(op, machine).unwrap();
-//     let c = if machine.P().carry { 0xff } else { 0 };
-//     let (new_val, mask, carry) = match op.def.mnemonic {
-//         ROL => (val << 1, c & 1, val & 0b10000000 > 0),
-//         ROR => (val >> 1, c & 0b10000000, val & 1 > 0),
-//         _ => panic!("{} is not a rotate operation", op.def.mnemonic),
-//     };
-//     set_val(new_val | mask, op, machine);
-//     set_flags(
-//         "NZC",
-//         &[neg(new_val | mask), zero(new_val | mask), carry],
-//         machine,
-//     );
-//     op.def.cycles
-// }
-//
+
+fn op_plp(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+    cpu.set_p(val);
+    val
+}
+
+fn op_push(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
+    let val: u8 = match op.mnemonic {
+        PHA => cpu.a(),
+        PHP => cpu.p(),
+        _ => panic!("{} is not a push operation", op.mnemonic),
+    };
+    val
+}
+
+fn op_rotate(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+    let c = if cpu.carry() { 0xff } else { 0 };
+    let (new_val, mask, carry) = match op.mnemonic {
+        ROL => (val << 1, c & 1, val & 0b10000000 > 0),
+        ROR => (val >> 1, c & 0b10000000, val & 1 > 0),
+        _ => panic!("{} is not a rotate operation", op.mnemonic),
+    };
+    let result = new_val | mask;
+    set_flags("NZC", &[neg(result), zero(result), carry], cpu);
+    result
+}
+
 // fn op_rti(op: &Operation, machine: &mut impl Machine) -> u8 {
 //     machine.cpu_mut().registers.status = ProcessorStatus::from(machine.pop());
 //     machine.cpu_mut().registers.counter = machine.pop() as u16 | ((machine.pop() as u16) << 8);
@@ -310,18 +256,16 @@ fn op_load(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
 //     machine.set_PC((lo | hi << 8).wrapping_add(1));
 //     op.def.cycles
 // }
-//
-// fn op_shift(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = get_val(op, machine).unwrap();
-//     let (res, carry) = match op.def.mnemonic {
-//         ASL => ((Wrapping(val) << 1).0, val & 0b10000000 > 0),
-//         LSR => (val >> 1, val & 1 > 0),
-//         _ => panic!("{} is not a shift operation", op.def.mnemonic),
-//     };
-//     set_val(res, op, machine);
-//     set_flags("NZC", &[neg(res), zero(res), carry], machine);
-//     op.def.cycles
-// }
+
+fn op_shift(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+    let (res, carry) = match op.mnemonic {
+        ASL => ((Wrapping(val) << 1).0, val & 0b10000000 > 0),
+        LSR => (val >> 1, val & 1 > 0),
+        _ => panic!("{} is not a shift operation", op.mnemonic),
+    };
+    set_flags("NZC", &[neg(res), zero(res), carry], cpu);
+    res
+}
 
 fn op_store(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
     match op.mnemonic {

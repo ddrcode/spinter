@@ -14,7 +14,7 @@ pub struct Registers {
     pub(crate) y: RefCell<u8>,
     pub(crate) pc: RefCell<u16>,
     pub(crate) sp: RefCell<u8>, // stack pointer
-    pub(crate) s: RefCell<u8>,
+    pub(crate) p: RefCell<u8>,
 }
 
 impl fmt::Display for Registers {
@@ -27,7 +27,7 @@ impl fmt::Display for Registers {
             *self.x.borrow(),
             *self.y.borrow(),
             *self.sp.borrow(),
-            *self.s.borrow()
+            *self.p.borrow()
         )
     }
 }
@@ -70,8 +70,8 @@ impl CpuState {
     }
 
     #[inline]
-    pub fn s(&self) -> u8 {
-        *self.reg.s.borrow()
+    pub fn p(&self) -> u8 {
+        *self.reg.p.borrow()
     }
 
     #[inline]
@@ -132,7 +132,24 @@ impl CpuState {
     }
 
     #[inline]
+    pub fn set_p(&self, val: u8) {
+        *self.reg.p.borrow_mut() = val;
+    }
+
+    #[inline]
     pub fn set_sp(&self, val: u8) {
+        *self.reg.sp.borrow_mut() = val;
+    }
+
+    #[inline]
+    pub fn dec_sp(&self) {
+        let val = self.reg.sp.borrow().wrapping_sub(1);
+        *self.reg.sp.borrow_mut() = val;
+    }
+
+    #[inline]
+    pub fn inc_sp(&self) {
+        let val = self.reg.sp.borrow().wrapping_add(1);
         *self.reg.sp.borrow_mut() = val;
     }
 
@@ -143,65 +160,65 @@ impl CpuState {
 
     #[inline]
     pub fn carry(&self) -> bool {
-        (self.s() & 1) > 0
+        (self.p() & 1) > 0
     }
 
     #[inline]
     pub fn negative(&self) -> bool {
-        (self.s() & 0b1000_0000) > 0
+        (self.p() & 0b1000_0000) > 0
     }
 
     #[inline]
     pub fn zero(&self) -> bool {
-        (self.s() & 0b0000_0010) > 0
+        (self.p() & 0b0000_0010) > 0
     }
 
     #[inline]
     pub fn overflow(&self) -> bool {
-        (self.s() & 0b0100_0000) > 0
+        (self.p() & 0b0100_0000) > 0
     }
 
     #[inline]
     pub fn interrupt_disable(&self) -> bool {
-        (self.s() & 0b0000_0100) > 0
+        (self.p() & 0b0000_0100) > 0
     }
 
     #[inline]
     pub fn decimal_mode(&self) -> bool {
-        (self.s() & 0b0000_1000) > 0
+        (self.p() & 0b0000_1000) > 0
     }
 
     #[inline]
     pub fn break_command(&self) -> bool {
-        (self.s() & 0b0001_0000) > 0
+        (self.p() & 0b0001_0000) > 0
     }
 
     pub fn set_negative(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b0111_1111 | bool_to_bit(&val, 7);
+        *self.reg.p.borrow_mut() = self.p() & 0b0111_1111 | bool_to_bit(&val, 7);
     }
 
     pub fn set_zero(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1111_1101 | bool_to_bit(&val, 1)
+        *self.reg.p.borrow_mut() = self.p() & 0b1111_1101 | bool_to_bit(&val, 1)
     }
 
     pub fn set_carry(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1111_1110 | bool_to_bit(&val, 0)
+        *self.reg.p.borrow_mut() = self.p() & 0b1111_1110 | bool_to_bit(&val, 0)
     }
 
     pub fn set_overflow(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1011_1111 | bool_to_bit(&val, 6)
+        *self.reg.p.borrow_mut() = self.p() & 0b1011_1111 | bool_to_bit(&val, 6)
     }
 
     pub fn set_interrupt_disable(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1111_1011 | bool_to_bit(&val, 2)
+        *self.reg.p.borrow_mut() = self.p() & 0b1111_1011 | bool_to_bit(&val, 2)
     }
 
     pub fn set_decimal_mode(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1111_0111 | bool_to_bit(&val, 3)
+        *self.reg.p.borrow_mut() = self.p() & 0b1111_0111 | bool_to_bit(&val, 3)
     }
 
     pub fn set_break_command(&self, val: bool) {
-        *self.reg.s.borrow_mut() = self.s() & 0b1110_1111 | bool_to_bit(&val, 4)
+        *self.reg.p.borrow_mut() = self.p() & 0b1110_1111 | bool_to_bit(&val, 4)
     }
 
     pub fn regs(&self) -> &Registers {

@@ -1,6 +1,4 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
+use self::macros::*;
 use crate::emulator::abstractions::PinDirection;
 use crate::emulator::cpus::mos6502::{AddressMode::*, OperationDef};
 use crate::emulator::cpus::CpuState;
@@ -13,15 +11,22 @@ pub type Stepper = Coroutine<Input, (), StepperResult>;
 
 pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
     use crate::emulator::cpus::mos6502::mnemonic::Mnemonic::*;
+    let def = op.clone();
 
     let s = match op.address_mode {
-        Implicit | Accumulator | Immediate => no_mem_stepper(op.clone()),
-        Relative => branch_stepper(op.clone()),
+        Implicit | Accumulator | Immediate if def.mnemonic != RTS => no_mem_stepper(def),
+        Relative => branch_stepper(def),
         _ => match op.mnemonic {
             LDA | LDX | LDY | EOR | AND | ORA | ADC | SBC | CMP | CPX | CPY | BIT => {
-                read_stepper(op.clone())
+                read_stepper(def)
             }
-            STA | STX | STY => write_stepper(op.clone()),
+            STA | STX | STY => write_stepper(def),
+            ASL | LSR | ROL | ROR | INC | DEC => rmw_stepper(def),
+            PHA | PHP => push_stepper(def),
+            PLA | PLP => pull_stepper(def),
+            JMP => jmp_stepper(def),
+            JSR => jsr_stepper(def),
+            RTS => rts_stepper(def),
             _ => return None,
         },
     };
@@ -86,7 +91,6 @@ impl StepperResult {
 ///       2    PC     R  read next instruction byte (and throw it away)
 ///
 /// Immediate addressing
-///
 ///       #  address R/W description
 ///      --- ------- --- ------------------------------------------
 ///       1    PC     R  fetch opcode, increment PC
@@ -96,8 +100,7 @@ fn no_mem_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         let mut opr = Operand::None;
 
-        request_read_from_pc(&cpu);
-        yielder.suspend(());
+        request_read_from_pc!(yielder, cpu);
 
         let val = match op.address_mode {
             Accumulator => cpu.a(),
@@ -106,8 +109,8 @@ fn no_mem_stepper(op: OperationDef) -> Stepper {
                 let o = cpu.pins.data.read();
                 opr = Operand::Byte(o);
                 o
-            },
-            _ => 0
+            }
+            _ => 0,
         };
         execute_operation(&cpu, &op, val);
         yielder.suspend(());
@@ -120,8 +123,7 @@ fn read_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         let opr: Operand;
 
-        request_read_from_pc(&cpu);
-        yielder.suspend(());
+        request_read_from_pc!(yielder, cpu);
 
         let lo = read_and_inc_pc(&cpu);
         yielder.suspend(());
@@ -155,11 +157,8 @@ fn write_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         let opr: Operand;
 
-        request_read_from_pc(&cpu);
-        yielder.suspend(());
-
-        let lo = read_and_inc_pc(&cpu);
-        yielder.suspend(());
+        request_read_from_pc!(yielder, cpu);
+        let lo = read_and_inc_pc!(yielder, cpu);
 
         let hi = if op.address_mode == Absolute {
             request_read_from_pc(&cpu);
@@ -186,6 +185,59 @@ fn write_stepper(op: OperationDef) -> Stepper {
     })
 }
 
+/// Stepper for read-modify-write (RMW) operations
+/// ```text
+/// Absolute addressing
+///       #  address R/W description
+///      --- ------- --- ------------------------------------------
+///       1    PC     R  fetch opcode, increment PC
+///       2    PC     R  fetch low byte of address, increment PC
+///       3    PC     R  fetch high byte of address, increment PC
+///       4  address  R  read from effective address
+///       5  address  W  write the value back to effective address,
+///                      and do the operation on it
+///       6  address  W  write the new value to effective address
+/// ```
+fn rmw_stepper(op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let opr: Operand;
+
+        request_read_from_pc!(yielder, cpu);
+        let lo = read_and_inc_pc!(yielder, cpu);
+
+        let hi = if op.address_mode == Absolute {
+            request_read_from_pc!(yielder, cpu);
+            let hi = read_and_inc_pc!(yielder, cpu);
+            opr = Operand::Word(u16::from_le_bytes([lo, hi]));
+            hi
+        } else {
+            opr = Operand::Byte(lo);
+            0
+        };
+
+        request_read_from_addr(&cpu, lo, hi);
+        yielder.suspend(());
+
+        let mut val = cpu.pins.data.read();
+        yielder.suspend(());
+
+        request_write_to_addr(&cpu, lo, hi);
+        yielder.suspend(());
+
+        cpu.pins.data.write(val);
+        val = execute_operation(&cpu, &op, val);
+        yielder.suspend(());
+
+        request_write_to_addr(&cpu, lo, hi);
+        yielder.suspend(());
+
+        cpu.pins.data.write(val);
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), opr)
+    })
+}
+
 /// Coroutine for branching operations.
 /// Relative addressing (BCC, BCS, BNE, BEQ, BPL, BMI, BVC, BVS)
 ///
@@ -205,7 +257,7 @@ fn write_stepper(op: OperationDef) -> Stepper {
 ///
 fn branch_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        request_read_from_pc(&cpu);
+        request_read_from_pc!(yielder, cpu);
         yielder.suspend(());
 
         let shift = cpu.pins.data.read();
@@ -215,16 +267,18 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         let branch = execute_operation(&cpu, &op, shift) > 0;
         if !branch {
             cpu.inc_pc();
+            // shouldn't we yield before?
             return StepperResult::new(false, cpu.clone(), opr);
         }
+
         let [lo, hi] = {
             let o = shift as i8;
-            (((cpu.pc() as i64 + o as i64) & 0xffff) as u16).to_le_bytes()
+            let pc = cpu.pc().wrapping_add(op.operand_len().into());
+            (((pc as i64 + o as i64) & 0xffff) as u16).to_le_bytes()
         };
         cpu.set_pcl(lo);
         yielder.suspend(());
 
-        // FIXME the operation below sets SYNC pin to hi. TBC whether it should happen
         request_opcode(&cpu);
         yielder.suspend(());
 
@@ -238,6 +292,197 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         }
 
         StepperResult::new(false, cpu.clone(), opr)
+    })
+}
+
+//--------------------------------------------------------------------
+// Stack steppers
+
+/// Push operations (PHA, PHP) stepper
+/// ```text
+///         #  address R/W description
+///    --- ------- --- -----------------------------------------------
+///     1    PC     R  fetch opcode, increment PC
+///     2    PC     R  read next instruction byte (and throw it away)
+///     3  $0100,S  W  push register on stack, decrement S
+/// ```
+fn push_stepper(op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let _ = fetch_byte_from_pc!(yielder, cpu);
+
+        let val = execute_operation(&cpu, &op, 0);
+        request_write_to_addr(&cpu, cpu.sp(), 0x01);
+        yielder.suspend(());
+
+        cpu.pins.data.write(val);
+        cpu.dec_sp();
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), Operand::None)
+    })
+}
+
+/// Pull operations (PLA, PLP) stepper
+/// ```text
+/// scription
+///    --- ------- --- -----------------------------------------------
+///     1    PC     R  fetch opcode, increment PC
+///     2    PC     R  read next instruction byte (and throw it away)
+///     3  $0100,S  R  increment S
+///     4  $0100,S  R  pull r
+/// ```
+fn pull_stepper(op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let _ = fetch_byte_from_pc!(yielder, cpu);
+
+        cpu.inc_sp();
+        yielder.suspend(());
+
+        request_read_from_addr(&cpu, cpu.sp(), 0x01);
+        yielder.suspend(());
+
+        let val = cpu.pins.data.read();
+        execute_operation(&cpu, &op, val);
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), Operand::None)
+    })
+}
+
+/// JSR stepper
+/// ```text
+///         #  address R/W description
+///    --- ------- --- -------------------------------------------------
+///     1    PC     R  fetch opcode, increment PC
+///     2    PC     R  fetch low address byte, increment PC
+///     3  $0100,S  R  internal operation (predecrement S?)
+///     4  $0100,S  W  push PCH on stack, decrement S
+///     5  $0100,S  W  push PCL on stack, decrement S
+///     6    PC     R  copy low address byte to PCL, fetch high address
+///                    byte to PCH
+/// ```
+fn jsr_stepper(_op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let lo = fetch_byte_and_inc_pc!(yielder, cpu);
+
+        // empty operation (see step 2 in comment above)
+        yielder.suspend(());
+
+        push_to_stack_and_dec_sp!(yielder, cpu, cpu.pch());
+        push_to_stack_and_dec_sp!(yielder, cpu, cpu.pcl());
+
+        request_read_from_pc!(yielder, cpu);
+
+        let hi = cpu.pins.data.read();
+        cpu.set_pcl(lo);
+        cpu.set_pch(hi);
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), Operand::None)
+    })
+}
+
+/// RTS stepper
+/// ```text
+///        #  address R/W description
+///    --- ------- --- -----------------------------------------------
+///     1    PC     R  fetch opcode, increment PC
+///     2    PC     R  read next instruction byte (and throw it away)
+///     3  $0100,S  R  increment S
+///     4  $0100,S  R  pull PCL from stack, increment S
+///     5  $0100,S  R  pull PCH from stack
+///     6    PC     R  increment PC
+/// ```
+fn rts_stepper(_op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let _ = fetch_byte_from_pc!(yielder, cpu);
+
+        cpu.inc_sp();
+        yielder.suspend(());
+
+        request_read_from_addr(&cpu, cpu.sp(), 0x01);
+        yielder.suspend(());
+
+        let lo = cpu.pins.data.read();
+        cpu.inc_sp();
+        yielder.suspend(());
+
+        request_read_from_addr(&cpu, cpu.sp(), 0x01);
+        yielder.suspend(());
+
+        let hi = cpu.pins.data.read();
+        yielder.suspend(());
+
+        cpu.set_pcl(lo);
+        cpu.set_pch(hi);
+        cpu.inc_pc();
+        yielder.suspend(());
+
+        StepperResult::new(false, cpu.clone(), Operand::None)
+    })
+}
+
+//--------------------------------------------------------------------
+// Individual mnemonic steppers ("other" steppers)
+
+/// ```text
+///   Absolute addressing
+///         #  address R/W description
+///        --- ------- --- -------------------------------------------------
+///         1    PC     R  fetch opcode, increment PC
+///         2    PC     R  fetch low address byte, increment PC
+///         3    PC     R  copy low address byte to PCL, fetch high address
+///                        byte to PCH
+///
+///   Absolute indirect addressing
+///         #   address  R/W description
+///        --- --------- --- ------------------------------------------
+///         1     PC      R  fetch opcode, increment PC
+///         2     PC      R  fetch pointer address low, increment PC
+///         3     PC      R  fetch pointer address high, increment PC
+///         4   pointer   R  fetch low address to latch
+///         5  pointer+1* R  fetch PCH, copy latch to PCL
+///
+///        Note: * The PCH will always be fetched from the same page
+///                than PCL, i.e. page boundary crossing is not handled.
+/// ```
+///
+fn jmp_stepper(op: OperationDef) -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let indirect = op.address_mode == Indirect;
+
+        request_read_from_pc!(yielder, cpu);
+        let lo = read_and_inc_pc!(yielder, cpu);
+
+        request_read_from_pc!(yielder, cpu);
+
+        let hi = cpu.pins.data.read();
+        let mut addr = u16::from_le_bytes([lo, hi]);
+        if indirect {
+            cpu.inc_pc();
+        } else {
+            cpu.set_pc(addr);
+        }
+        yielder.suspend(());
+
+        if indirect {
+            request_read_from_addr(&cpu, lo, hi);
+            yielder.suspend(());
+
+            let final_lo = cpu.pins.data.read();
+            yielder.suspend(());
+
+            // page boundary crossing not allowed
+            request_read_from_addr(&cpu, lo.wrapping_add(1), hi);
+            yielder.suspend(());
+
+            let final_hi = cpu.pins.data.read();
+            addr = u16::from_le_bytes([final_lo, final_hi]);
+            cpu.set_pc(addr);
+            yielder.suspend(());
+        }
+
+        StepperResult::new(false, cpu.clone(), Operand::Word(addr))
     })
 }
 
@@ -284,7 +529,7 @@ fn request_opcode(cpu: &Input) {
 }
 
 fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
-    let mut cpu = cpu;
+    let cpu = cpu;
     let opcode = cpu.pins.data.read();
     cpu.inc_pc();
     cpu.set_ir(opcode);
@@ -292,132 +537,60 @@ fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
     opcode
 }
 
-// fn read_stepper(op: OperationDef) -> Stepper {
-//     Coroutine::new(move |yielder, cpu: Input| {
-//         let lo = read_and_inc_pc(&cpu);
-//         yielder.suspend(());
-//
-//         let hi = if op.address_mode == Absolute {
-//             let hi = read_and_inc_pc(&cpu);
-//             yielder.suspend(());
-//             hi
-//         } else {
-//             0
-//         };
-//
-//         let (val, _) = read_from_addr(&cpu, lo, hi);
-//         // cpu.execute(val);
-//         execute_operation(&mut cpu, &op, val);
-//         yielder.suspend(());
-//
-//         false
-//     })
-// }
+//--------------------------------------------------------------------
+// Macros
 
-// // ----------------------------------------------------------------------
-// // Absolute addressing
-//
-// pub fn abs_read(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let hi = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let (val, _) = read_from_addr(cpu, lo, hi);
-//         cpu.execute(val);
-//         co.yield_(()).await;
-//     }))
-// }
-//
-// pub fn abs_write(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let hi = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let val = cpu.execute(0);
-//         cpu.write_byte(addr(lo, hi), val);
-//         co.yield_(()).await;
-//     }))
-// }
-//
-// pub fn abs_rmw(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let hi = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let (val, addr) = read_from_addr(cpu, lo, hi);
-//         co.yield_(()).await;
-//
-//         let new_val = write_and_exec(cpu, addr, val);
-//         co.yield_(()).await;
-//
-//         cpu.write_byte(addr, new_val);
-//         co.yield_(()).await;
-//     }))
-// }
-//
-// // ----------------------------------------------------------------------
-// // Zer-page addressing
-//
-// pub fn zp_read(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let (val, _) = read_from_addr(cpu, lo, 0);
-//         cpu.execute(val);
-//         co.yield_(()).await;
-//     }))
-// }
-//
-// pub fn zp_write(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let val = cpu.execute(0);
-//         cpu.write_byte(addr(lo, 0), val);
-//         co.yield_(()).await;
-//     }))
-// }
-//
-// pub fn zp_rmw(cpu: &mut impl CPU) -> OpGen {
-//     Box::new(Gen::new(|co| async move {
-//         let lo = read_and_inc_pc(cpu);
-//         co.yield_(()).await;
-//
-//         let (val, addr) = read_from_addr(cpu, lo, 0);
-//         co.yield_(()).await;
-//
-//         let new_val = write_and_exec(cpu, addr, val);
-//         co.yield_(()).await;
-//
-//         cpu.write_byte(addr, new_val);
-//         co.yield_(()).await;
-//     }))
-// }
+mod macros {
 
-// ----------------------------------------------------------------------
-// utils
+    // 1-step macros (single yield)
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    macro_rules! request_read_from_pc {
+        ($yielder: ident, $cpu: ident) => {
+            request_read_from_pc(&$cpu);
+            $yielder.suspend(());
+        };
+    }
 
-    // #[test]
-    // fn test_stepper() {
-    //     let mut stepper = nop();
-    //     match stepper.resume(()) {
-    //         CoroutineResult::Yield(()) => {},
-    //         CoroutineResult::Return(_) => {},
-    //     };
-    // }
+    macro_rules! read_and_inc_pc {
+        ($yielder: ident, $cpu: ident) => {{
+            let val = read_and_inc_pc(&$cpu);
+            $yielder.suspend(());
+            val
+        }};
+    }
+
+    // 2-step macros (double yield)
+
+    macro_rules! fetch_byte_from_pc {
+        ($yielder: ident, $cpu: ident) => {{
+            request_read_from_pc!($yielder, $cpu);
+            let val = $cpu.pins.data.read();
+            $yielder.suspend(());
+            val
+        }};
+    }
+
+    macro_rules! fetch_byte_and_inc_pc {
+        ($yielder: ident, $cpu: ident) => {{
+            request_read_from_pc!($yielder, $cpu);
+            read_and_inc_pc!($yielder, $cpu)
+        }};
+    }
+
+    macro_rules! push_to_stack_and_dec_sp {
+        ($yielder: ident, $cpu: ident, $val: expr) => {
+            request_write_to_addr(&$cpu, $cpu.sp(), 0x01);
+            $yielder.suspend(());
+
+            $cpu.pins.data.write($val);
+            $cpu.dec_sp();
+            $yielder.suspend(());
+        };
+    }
+
+    pub(super) use fetch_byte_and_inc_pc;
+    pub(super) use fetch_byte_from_pc;
+    pub(super) use push_to_stack_and_dec_sp;
+    pub(super) use read_and_inc_pc;
+    pub(super) use request_read_from_pc;
 }

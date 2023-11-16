@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::debugger::OperationDebug;
 use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};
 use crate::emulator::cpus::mos6502::{
-    get_stepper, read_opcode, Operand, OperationDef, Stepper, OPERATIONS,
+    get_stepper, read_opcode, Operand, OperationDef, Stepper, OPERATIONS, mnemonic_from_opcode,
 };
 
 use super::{CpuState, W65C02_Pins};
@@ -94,8 +94,9 @@ impl W65C02Logic {
                     let s = get_stepper(&op);
                     if s.is_none() {
                         panic!(
-                            "There is no stepper for current IR: {:#02x}",
-                            self.state.ir()
+                            "There is no stepper for current IR: {:#02x} (mnemonic: {:?})",
+                            self.state.ir(),
+                            mnemonic_from_opcode(self.state.ir())
                         );
                     }
                     s.unwrap()
