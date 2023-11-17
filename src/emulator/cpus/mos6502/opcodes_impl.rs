@@ -1,4 +1,4 @@
-use super::{AddressMode::*, Mnemonic::*, Operation, OperationDef};
+use super::{Mnemonic::*, OperationDef};
 use crate::emulator::cpus::CpuState;
 use std::num::Wrapping;
 
@@ -91,7 +91,7 @@ fn op_arithmetic(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     res
 }
 
-fn op_bit(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_bit(cpu: &CpuState, _op: &OperationDef, val: u8) -> u8 {
     set_flags(
         "NZV",
         &[neg(val), zero(val & cpu.a()), val & 0b01000000 > 0],

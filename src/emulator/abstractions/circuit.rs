@@ -4,7 +4,7 @@ use super::Component;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::{Deref, Range};
+use std::ops::{Range};
 use std::thread;
 use std::time::Duration;
 

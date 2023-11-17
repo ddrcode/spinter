@@ -1,5 +1,5 @@
 use corosensei::CoroutineResult;
-use std::{cell::RefCell, rc::Rc};
+use std::{rc::Rc};
 
 use crate::debugger::OperationDebug;
 use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};

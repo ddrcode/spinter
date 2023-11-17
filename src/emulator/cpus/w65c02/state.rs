@@ -1,6 +1,6 @@
 use super::W65C02_Pins;
 use crate::utils::bool_to_bit;
-use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
+use std::{cell::RefCell, fmt, rc::Rc};
 
 //--------------------------------------------------------------------
 // Registers

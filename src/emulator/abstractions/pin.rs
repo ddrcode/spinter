@@ -1,6 +1,6 @@
 use super::{CircuitCtx, PinMessage};
 use crate::emulator::EmulatorError;
-use crossbeam_channel::Sender;
+
 use std::cell::{OnceCell, RefCell};
 
 #[derive(Debug, PartialEq, Copy, Clone)]
