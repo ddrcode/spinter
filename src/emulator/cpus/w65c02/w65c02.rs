@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::debugger::OperationDebug;
 use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};
 use crate::emulator::cpus::mos6502::{
-    get_stepper, read_opcode, Operand, OperationDef, Stepper, OPERATIONS, mnemonic_from_opcode,
+    get_stepper, read_opcode, init_stepper, Operand, OperationDef, Stepper, OPERATIONS, mnemonic_from_opcode,
 };
 
 use super::{CpuState, W65C02_Pins};
@@ -56,7 +56,6 @@ impl Component for W65C02 {
     }
 
     fn init(&mut self) {
-        self.logic.state.set_pc(0x200);
     }
 }
 
@@ -73,7 +72,7 @@ impl W65C02Logic {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         let logic = W65C02Logic {
             state: CpuState::new(pins),
-            stepper: read_opcode(),
+            stepper: init_stepper(),
             cycles: 0,
         };
 

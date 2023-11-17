@@ -4,7 +4,7 @@ use crate::emulator::cpus::mos6502::{AddressMode::*, Mnemonic, OperationDef};
 use crate::emulator::cpus::CpuState;
 use corosensei::Coroutine;
 
-use super::{execute_operation, Operand};
+use super::{execute_operation, AddressMode, Operand};
 
 pub type Input = CpuState;
 pub type Stepper = Coroutine<Input, (), StepperResult>;
@@ -33,9 +33,20 @@ pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
             _ => return None,
         },
     };
-
     Some(s)
 }
+
+pub fn init_stepper() -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        let lo = fetch_byte_from_addr!(yielder, cpu, 0xfc, 0xff);
+        cpu.set_pcl(lo);
+        let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
+        cpu.set_pch(hi);
+        println!("PC IS SET TO {:04x}", cpu.pc());
+        StepperResult::partial(false, cpu)
+    })
+}
+
 
 pub fn read_opcode() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
@@ -45,7 +56,7 @@ pub fn read_opcode() -> Stepper {
         read_opcode_and_inc_pc(&cpu);
         yielder.suspend(());
 
-        StepperResult::partial(true, cpu.clone())
+        StepperResult::partial(true, cpu)
     })
 }
 
@@ -117,7 +128,7 @@ fn no_mem_stepper(op: OperationDef) -> Stepper {
         }
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), opr)
+        StepperResult::new(false, cpu, opr)
     })
 }
 
@@ -132,15 +143,7 @@ fn read_stepper(op: OperationDef) -> Stepper {
         execute_operation(&cpu, &op, val);
         yielder.suspend(());
 
-        StepperResult::new(
-            false,
-            cpu.clone(),
-            if hi == 0 {
-                Operand::Byte(lo)
-            } else {
-                Operand::Word(u16::from_le_bytes([lo, hi]))
-            },
-        )
+        StepperResult::new(false, cpu, get_addr_operand(&op.address_mode, lo, hi))
     })
 }
 
@@ -172,7 +175,7 @@ fn write_stepper(op: OperationDef) -> Stepper {
         cpu.pins.data.write(val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), opr)
+        StepperResult::new(false, cpu, opr)
     })
 }
 
@@ -225,7 +228,7 @@ fn rmw_stepper(op: OperationDef) -> Stepper {
         cpu.pins.data.write(val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), opr)
+        StepperResult::new(false, cpu, opr)
     })
 }
 
@@ -259,7 +262,7 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         if !branch {
             cpu.inc_pc();
             // shouldn't we yield before?
-            return StepperResult::new(false, cpu.clone(), opr);
+            return StepperResult::new(false, cpu, opr);
         }
 
         let [lo, hi] = {
@@ -276,13 +279,13 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         if cpu.pch() == hi {
             read_opcode_and_inc_pc(&cpu);
             yielder.suspend(());
-            return StepperResult::new(true, cpu.clone(), opr);
+            return StepperResult::new(true, cpu, opr);
         } else {
             // fix PC and exit, so the next cycle starts with fetching correct opcode
             cpu.set_pch(hi);
         }
 
-        StepperResult::new(false, cpu.clone(), opr)
+        StepperResult::new(false, cpu, opr)
     })
 }
 
@@ -309,7 +312,7 @@ fn push_stepper(op: OperationDef) -> Stepper {
         cpu.dec_sp();
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), Operand::None)
+        StepperResult::new(false, cpu, Operand::None)
     })
 }
 
@@ -336,7 +339,7 @@ fn pull_stepper(op: OperationDef) -> Stepper {
         execute_operation(&cpu, &op, val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), Operand::None)
+        StepperResult::new(false, cpu, Operand::None)
     })
 }
 
@@ -369,11 +372,7 @@ fn jsr_stepper(_op: OperationDef) -> Stepper {
         cpu.set_pch(hi);
         yielder.suspend(());
 
-        StepperResult::new(
-            false,
-            cpu.clone(),
-            Operand::Word(u16::from_le_bytes([lo, hi])),
-        )
+        StepperResult::new(false, cpu, Operand::Word(u16::from_le_bytes([lo, hi])))
     })
 }
 
@@ -441,7 +440,7 @@ fn rts_rti_stepper(op: OperationDef) -> Stepper {
         }
         yielder.suspend(());
 
-        StepperResult::new(false, cpu.clone(), Operand::None)
+        StepperResult::new(false, cpu, Operand::None)
     })
 }
 
@@ -505,7 +504,7 @@ fn jmp_stepper(op: OperationDef) -> Stepper {
             yielder.suspend(());
         }
 
-        StepperResult::new(false, cpu.clone(), Operand::Word(addr))
+        StepperResult::new(false, cpu, Operand::Word(addr))
     })
 }
 
@@ -560,6 +559,16 @@ fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
     opcode
 }
 
+fn get_addr_operand(am: &AddressMode, lo: u8, hi: u8) -> Operand {
+    match am {
+        Absolute | AbsoluteX | AbsoluteY | Indirect | IndirectX | IndirectY => {
+            Operand::Word(u16::from_le_bytes([lo, hi]))
+        }
+        ZeroPage | ZeroPageX | ZeroPageY | Relative => Operand::Byte(lo),
+        Immediate | Implicit | Accumulator => Operand::None,
+    }
+}
+
 //--------------------------------------------------------------------
 // Macros
 
@@ -600,6 +609,16 @@ mod macros {
         }};
     }
 
+    macro_rules! fetch_byte_from_addr {
+        ($yielder: ident, $cpu: ident, $lo: expr, $hi: expr) => {{
+            request_read_from_addr(&$cpu, $lo, $hi);
+            $yielder.suspend(());
+            let val = $cpu.pins.data.read();
+            $yielder.suspend(());
+            val
+        }}
+    }
+
     macro_rules! push_to_stack_and_dec_sp {
         ($yielder: ident, $cpu: ident, $val: expr) => {
             request_write_to_addr(&$cpu, $cpu.sp(), 0x01);
@@ -615,29 +634,45 @@ mod macros {
 
     macro_rules! decode_address {
         ($yielder: ident, $cpu: ident, $op: ident) => {{
-            request_read_from_pc!($yielder, $cpu);
+            let lo = fetch_byte_and_inc_pc!($yielder, $cpu);
 
-            let lo = read_and_inc_pc(&$cpu);
-            $yielder.suspend(());
-
-            let hi = if $op.address_mode == Absolute {
-                request_read_from_pc(&$cpu);
-                $yielder.suspend(());
-
-                let hi = read_and_inc_pc(&$cpu);
-                $yielder.suspend(());
-                hi
-            } else {
-                0
-            };
-
-            (lo, hi)
+            match $op.address_mode {
+                Absolute => {
+                    let hi = fetch_byte_and_inc_pc!($yielder, $cpu);
+                    (lo, hi)
+                }
+                AbsoluteX | AbsoluteY => {
+                    let hi = fetch_byte_and_inc_pc!($yielder, $cpu);
+                    let addr = u16::from_le_bytes([lo, hi]).wrapping_add(
+                        if $op.address_mode == AbsoluteX {
+                            $cpu.x().into()
+                        } else {
+                            $cpu.y().into()
+                        },
+                    );
+                    let res  = addr.to_le_bytes();
+                    if res[1] != hi {
+                        // additional read in case of crossing page boundary
+                        // to follow real processor behaviour
+                        fetch_byte_from_addr!($yielder, $cpu, res[0], hi);
+                    }
+                    res.into()
+                }
+                ZeroPage => (lo, 0),
+                ZeroPageX => (lo.wrapping_add($cpu.x()), 0),
+                ZeroPageY => (lo.wrapping_add($cpu.y()), 0),
+                _ => panic!(
+                    "Can't decode address for {:?} address mode",
+                    $op.address_mode
+                ),
+            }
         }};
     }
 
     pub(super) use decode_address;
     pub(super) use fetch_byte_and_inc_pc;
     pub(super) use fetch_byte_from_pc;
+    pub(super) use fetch_byte_from_addr;
     pub(super) use push_to_stack_and_dec_sp;
     pub(super) use read_and_inc_pc;
     pub(super) use request_read_from_pc;
