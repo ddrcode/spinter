@@ -54,11 +54,11 @@ impl BenEaterMachine {
 
 impl Machine for BenEaterMachine {
     fn start(&mut self) {
-        thread::sleep(Duration::from_millis(600));
+        thread::sleep(Duration::from_millis(500));
         self.reset();
         loop {
             self.step();
-            thread::sleep(Duration::from_millis(1));
+            thread::sleep(Duration::from_micros(1));
         }
     }
 
@@ -79,7 +79,7 @@ impl Machine for BenEaterMachine {
     }
 
     fn step(&self) {
-        let mut threshold = 50000;
+        let mut threshold = 10000;
         self.circuit.tick();
         loop {
             let res = self.circuit.receiver.try_recv();

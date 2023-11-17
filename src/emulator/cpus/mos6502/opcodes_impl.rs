@@ -16,11 +16,10 @@ pub fn execute_operation(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
         "op_incdec_reg" => op_incdec_reg(cpu, op, val),
         "op_load" => op_load(cpu, op, val),
         //     "op_nop" => op_nop(op, machine),
-        //     "op_pla" => op_pla(op, machine),
+        "op_pla" => op_pla(cpu, op, val),
         "op_plp" => op_plp(cpu, op, val),
         "op_push" => op_push(cpu, op, val),
         "op_rotate" => op_rotate(cpu, op, val),
-        //     "op_rti" => op_rti(op, machine),
         "op_shift" => op_shift(cpu, op, val),
         "op_store" => op_store(cpu, op, val),
         "op_transfer" => op_transfer(cpu, op, val),
@@ -210,15 +209,14 @@ fn op_load(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
 // fn op_nop(op: &Operation, _machine: &mut impl Machine) -> u8 {
 //     op.def.cycles
 // }
-//
-// fn op_pla(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let val = machine.pop();
-//     machine.set_A(val);
-//     set_nz_flags(val, machine);
-//     op.def.cycles
-// }
 
-fn op_plp(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
+fn op_pla(cpu: &CpuState, _op: &OperationDef, val: u8) -> u8 {
+    cpu.set_a(val);
+    set_nz_flags(val, cpu);
+    val
+}
+
+fn op_plp(cpu: &CpuState, _op: &OperationDef, val: u8) -> u8 {
     cpu.set_p(val);
     val
 }
@@ -235,27 +233,14 @@ fn op_push(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
 fn op_rotate(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     let c = if cpu.carry() { 0xff } else { 0 };
     let (new_val, mask, carry) = match op.mnemonic {
-        ROL => (val << 1, c & 1, val & 0b10000000 > 0),
-        ROR => (val >> 1, c & 0b10000000, val & 1 > 0),
+        ROL => (val << 1, c & 1, val & 0b1000_0000 > 0),
+        ROR => (val >> 1, c & 0b1000_0000, val & 1 > 0),
         _ => panic!("{} is not a rotate operation", op.mnemonic),
     };
     let result = new_val | mask;
     set_flags("NZC", &[neg(result), zero(result), carry], cpu);
     result
 }
-
-// fn op_rti(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     machine.cpu_mut().registers.status = ProcessorStatus::from(machine.pop());
-//     machine.cpu_mut().registers.counter = machine.pop() as u16 | ((machine.pop() as u16) << 8);
-//     op.def.cycles
-// }
-//
-// fn op_rts(op: &Operation, machine: &mut impl Machine) -> u8 {
-//     let lo = machine.pop() as u16;
-//     let hi = machine.pop() as u16;
-//     machine.set_PC((lo | hi << 8).wrapping_add(1));
-//     op.def.cycles
-// }
 
 fn op_shift(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     let (res, carry) = match op.mnemonic {

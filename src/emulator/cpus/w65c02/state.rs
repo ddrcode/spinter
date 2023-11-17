@@ -1,11 +1,11 @@
 use super::W65C02_Pins;
 use crate::utils::bool_to_bit;
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 //--------------------------------------------------------------------
 // Registers
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Registers {
     /// Stores currently processed instruction. Can't be set by any operation.
     pub(crate) ir: RefCell<u8>,
@@ -17,11 +17,25 @@ pub struct Registers {
     pub(crate) p: RefCell<u8>,
 }
 
+impl Default for Registers {
+    fn default() -> Self {
+        Self {
+            ir: Default::default(),
+            a: Default::default(),
+            x: Default::default(),
+            y: Default::default(),
+            pc: Default::default(),
+            sp: RefCell::new(0xfa),
+            p: RefCell::new(0b0010_0000),
+        }
+    }
+}
+
 impl fmt::Display for Registers {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "PC:${:04x}  A:${:02x}  X:${:02x}  Y:${:02x}  SP:${:02x}  S:%{:08b}",
+            "PC:${:04x}  A:${:02x}  X:${:02x}  Y:${:02x}  SP:${:02x}  P:%{:08b}",
             *self.pc.borrow(),
             *self.a.borrow(),
             *self.x.borrow(),
@@ -45,7 +59,7 @@ impl CpuState {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         Self {
             pins,
-            reg: Default::default()
+            reg: Default::default(),
         }
     }
 
@@ -133,7 +147,7 @@ impl CpuState {
 
     #[inline]
     pub fn set_p(&self, val: u8) {
-        *self.reg.p.borrow_mut() = val;
+        *self.reg.p.borrow_mut() = val | 0b0010_0000;
     }
 
     #[inline]

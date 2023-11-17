@@ -15,7 +15,7 @@ pub fn disassemble(op: &OperationDebug, verbose: bool, next_op: bool) -> String 
         }
         o.unwrap()
     };
-    let addr_correction = if_else(next_op, 0u16, def.len().into());
+    let addr_correction = if_else(next_op, 0u16, 1);
     let addr = op.reg.pc.borrow().wrapping_sub(addr_correction);
     let val = operand_to_bytes_string(&op.operand);
     let opstr = op_to_string(&def, &op.operand);

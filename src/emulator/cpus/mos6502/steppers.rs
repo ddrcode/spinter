@@ -1,6 +1,6 @@
 use self::macros::*;
 use crate::emulator::abstractions::PinDirection;
-use crate::emulator::cpus::mos6502::{AddressMode::*, OperationDef};
+use crate::emulator::cpus::mos6502::{AddressMode::*, Mnemonic, OperationDef};
 use crate::emulator::cpus::CpuState;
 use corosensei::Coroutine;
 
@@ -16,6 +16,9 @@ pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
     let s = match op.address_mode {
         Implicit | Accumulator | Immediate if def.mnemonic != RTS => no_mem_stepper(def),
         Relative => branch_stepper(def),
+        ZeroPageX | ZeroPageY | AbsoluteX | AbsoluteY | Indirect | IndirectX | IndirectY => {
+            panic!("Address mode {} not implemented!", op.address_mode);
+        }
         _ => match op.mnemonic {
             LDA | LDX | LDY | EOR | AND | ORA | ADC | SBC | CMP | CPX | CPY | BIT => {
                 read_stepper(def)
@@ -26,7 +29,7 @@ pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
             PLA | PLP => pull_stepper(def),
             JMP => jmp_stepper(def),
             JSR => jsr_stepper(def),
-            RTS => rts_stepper(def),
+            RTS | RTI => rts_rti_stepper(def),
             _ => return None,
         },
     };
@@ -112,7 +115,10 @@ fn no_mem_stepper(op: OperationDef) -> Stepper {
             }
             _ => 0,
         };
-        execute_operation(&cpu, &op, val);
+        let res = execute_operation(&cpu, &op, val);
+        if op.address_mode == Accumulator {
+            cpu.set_a(res);
+        }
         yielder.suspend(());
 
         StepperResult::new(false, cpu.clone(), opr)
@@ -382,6 +388,10 @@ fn jsr_stepper(_op: OperationDef) -> Stepper {
     })
 }
 
+/// Steppers for return-from-subroutine (RTS) and
+/// return-from-interrupt (RTI) are implemented together
+/// do to similarity.
+///
 /// RTS stepper
 /// ```text
 ///        #  address R/W description
@@ -393,12 +403,34 @@ fn jsr_stepper(_op: OperationDef) -> Stepper {
 ///     5  $0100,S  R  pull PCH from stack
 ///     6    PC     R  increment PC
 /// ```
-fn rts_stepper(_op: OperationDef) -> Stepper {
+///
+/// RTI stepper
+/// ```text
+///         #  address R/W description
+///    --- ------- --- -----------------------------------------------
+///     1    PC     R  fetch opcode, increment PC
+///     2    PC     R  read next instruction byte (and throw it away)
+///     3  $0100,S  R  increment S
+///     4  $0100,S  R  pull P from stack, increment S
+///     5  $0100,S  R  pull PCL from stack, increment S
+///     6  $0100,S  R  pull PCH from stack
+/// ```
+fn rts_rti_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         let _ = fetch_byte_from_pc!(yielder, cpu);
 
         cpu.inc_sp();
         yielder.suspend(());
+
+        if op.mnemonic == Mnemonic::RTI {
+            request_read_from_addr(&cpu, cpu.sp(), 0x01);
+            yielder.suspend(());
+
+            let p = cpu.pins.data.read();
+            cpu.set_p(p);
+            cpu.inc_sp();
+            yielder.suspend(());
+        }
 
         request_read_from_addr(&cpu, cpu.sp(), 0x01);
         yielder.suspend(());
@@ -415,7 +447,9 @@ fn rts_stepper(_op: OperationDef) -> Stepper {
 
         cpu.set_pcl(lo);
         cpu.set_pch(hi);
-        cpu.inc_pc();
+        if op.mnemonic == Mnemonic::RTS {
+            cpu.inc_pc();
+        }
         yielder.suspend(());
 
         StepperResult::new(false, cpu.clone(), Operand::None)

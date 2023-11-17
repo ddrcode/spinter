@@ -85,10 +85,10 @@ impl W65C02Logic {
         match v {
             CoroutineResult::Yield(()) => {}
             CoroutineResult::Return(res) => {
+                self.state = res.cpu;
                 if res.completed {
                     self.debug(&res.operand);
                 }
-                self.state = res.cpu;
                 self.stepper = if res.has_opcode {
                     let op = self.decode_op(&self.state.ir());
                     let s = get_stepper(&op);
