@@ -22,7 +22,7 @@ pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
 fn main() -> Result<()> {
 
     // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/all-opcodes.p"))?;
-    let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/adc.p"))?;
+    let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/add-sub-16bit.p"))?;
 
     let mut be = BenEaterMachine::with_program(0x200, &program).unwrap();
     be.start();
