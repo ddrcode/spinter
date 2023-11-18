@@ -2,5 +2,4 @@
 .direnv/
 tests/target
 tests/bin
-rom/
 

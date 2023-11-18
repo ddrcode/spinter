@@ -149,24 +149,7 @@ fn read_stepper(op: OperationDef) -> Stepper {
 
 fn write_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let opr: Operand;
-
-        request_read_from_pc!(yielder, cpu);
-        let lo = read_and_inc_pc!(yielder, cpu);
-
-        let hi = if op.address_mode == Absolute {
-            request_read_from_pc(&cpu);
-            yielder.suspend(());
-
-            let hi = read_and_inc_pc(&cpu);
-            yielder.suspend(());
-
-            opr = Operand::Word(u16::from_le_bytes([lo, hi]));
-            hi
-        } else {
-            opr = Operand::Byte(lo);
-            0
-        };
+        let (lo, hi) = decode_address!(yielder, cpu, op);
 
         request_write_to_addr(&cpu, lo, hi);
         yielder.suspend(());
@@ -175,7 +158,7 @@ fn write_stepper(op: OperationDef) -> Stepper {
         cpu.pins.data.write(val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu, opr)
+        StepperResult::new(false, cpu, get_addr_operand(&op.address_mode, lo, hi))
     })
 }
 
