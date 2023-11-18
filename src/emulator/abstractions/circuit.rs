@@ -4,7 +4,7 @@ use super::Component;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ops::{Range};
+use std::ops::Range;
 use std::thread;
 use std::time::Duration;
 
@@ -209,7 +209,7 @@ pub struct Circuit {
     pub(crate) receiver: Receiver<PinMessage>,
     pub(crate) sender: Sender<PinMessage>,
     // FIXME use Oscilator (X1) instead
-    state: RefCell<bool>,
+    pub(crate) state: RefCell<bool>,
 }
 
 impl Circuit {

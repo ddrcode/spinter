@@ -58,7 +58,7 @@ impl Machine for SimplifiedC64Machine {
         self.reset();
         loop {
             self.step();
-            thread::sleep(Duration::from_micros(1));
+            thread::sleep(Duration::from_micros(100));
         }
     }
 
@@ -79,7 +79,7 @@ impl Machine for SimplifiedC64Machine {
     }
 
     fn step(&self) {
-        let mut threshold = 10000;
+        let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
         self.circuit.tick();
         loop {
             let res = self.circuit.receiver.try_recv();
@@ -87,7 +87,7 @@ impl Machine for SimplifiedC64Machine {
                 match e {
                     TryRecvError::Empty => {
                         threshold -= 1;
-                        if threshold == 0 {
+                        if threshold == 0 {//|| !*self.circuit.state.borrow() {
                             break;
                         }
                         continue;

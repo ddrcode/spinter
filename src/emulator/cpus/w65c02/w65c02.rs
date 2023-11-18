@@ -1,10 +1,11 @@
 use corosensei::CoroutineResult;
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use crate::debugger::OperationDebug;
 use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};
 use crate::emulator::cpus::mos6502::{
-    get_stepper, read_opcode, init_stepper, Operand, OperationDef, Stepper, OPERATIONS, mnemonic_from_opcode,
+    get_stepper, init_stepper, mnemonic_from_opcode, read_opcode, Operand, OperationDef, Stepper,
+    OPERATIONS,
 };
 
 use super::{CpuState, W65C02_Pins};
@@ -46,7 +47,7 @@ impl Component for W65C02 {
             "PHI2" => {
                 self.pins["PHI1O"].write(!val).unwrap();
                 self.pins["PHI2O"].write(val).unwrap();
-                self.logic.tick();
+                self.logic.tick(val);
                 if val {
                     self.logic.advance_cycles();
                 }
@@ -55,8 +56,7 @@ impl Component for W65C02 {
         };
     }
 
-    fn init(&mut self) {
-    }
+    fn init(&mut self) {}
 }
 
 //--------------------------------------------------------------------
@@ -79,7 +79,7 @@ impl W65C02Logic {
         logic
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self, phase: bool) {
         let v = self.stepper.resume(self.state.clone());
         match v {
             CoroutineResult::Yield(()) => {}
@@ -100,6 +100,9 @@ impl W65C02Logic {
                     }
                     s.unwrap()
                 } else {
+                    if phase != false {
+                        panic!("New instruction must start with phase high");
+                    }
                     read_opcode()
                 }
             }

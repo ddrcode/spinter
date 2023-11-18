@@ -236,7 +236,6 @@ fn rmw_stepper(op: OperationDef) -> Stepper {
 fn branch_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         request_read_from_pc!(yielder, cpu);
-        yielder.suspend(());
 
         let shift = cpu.pins.data.read();
         let opr = Operand::Byte(shift);
@@ -267,6 +266,7 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         } else {
             // fix PC and exit, so the next cycle starts with fetching correct opcode
             cpu.set_pch(hi);
+            yielder.suspend(());
         }
 
         StepperResult::new(false, cpu, opr)
@@ -342,9 +342,6 @@ fn pull_stepper(op: OperationDef) -> Stepper {
 fn jsr_stepper(_op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         let lo = fetch_byte_and_inc_pc!(yielder, cpu);
-
-        // empty operation (see step 2 in comment above)
-        yielder.suspend(());
 
         push_to_stack_and_dec_sp!(yielder, cpu, cpu.pch());
         push_to_stack_and_dec_sp!(yielder, cpu, cpu.pcl());
@@ -526,7 +523,6 @@ fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
 }
 
 fn request_opcode(cpu: &Input) {
-    let cpu = cpu;
     cpu.pins
         .set_sync(true)
         .set_data_direction(PinDirection::Input)
