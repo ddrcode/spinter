@@ -38,15 +38,16 @@ pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
 
 pub fn init_stepper() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let lo = fetch_byte_from_addr!(yielder, cpu, 0xfc, 0xff);
-        cpu.set_pcl(lo);
-        let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
-        cpu.set_pch(hi);
+        // let lo = fetch_byte_from_addr!(yielder, cpu, 0xfc, 0xff);
+        // cpu.set_pcl(lo);
+        // let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
+        // cpu.set_pch(hi);
+        cpu.set_pc(0xfce2);
         println!("PC IS SET TO {:04x}", cpu.pc());
+        yielder.suspend(());
         StepperResult::partial(false, cpu)
     })
 }
-
 
 pub fn read_opcode() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
@@ -599,7 +600,7 @@ mod macros {
             let val = $cpu.pins.data.read();
             $yielder.suspend(());
             val
-        }}
+        }};
     }
 
     macro_rules! push_to_stack_and_dec_sp {
@@ -620,6 +621,9 @@ mod macros {
             let lo = fetch_byte_and_inc_pc!($yielder, $cpu);
 
             match $op.address_mode {
+                ZeroPage => (lo, 0),
+                ZeroPageX => (lo.wrapping_add($cpu.x()), 0),
+                ZeroPageY => (lo.wrapping_add($cpu.y()), 0),
                 Absolute => {
                     let hi = fetch_byte_and_inc_pc!($yielder, $cpu);
                     (lo, hi)
@@ -633,7 +637,7 @@ mod macros {
                             $cpu.y().into()
                         },
                     );
-                    let res  = addr.to_le_bytes();
+                    let res = addr.to_le_bytes();
                     if res[1] != hi {
                         // additional read in case of crossing page boundary
                         // to follow real processor behaviour
@@ -641,9 +645,24 @@ mod macros {
                     }
                     res.into()
                 }
-                ZeroPage => (lo, 0),
-                ZeroPageX => (lo.wrapping_add($cpu.x()), 0),
-                ZeroPageY => (lo.wrapping_add($cpu.y()), 0),
+                IndirectX => {
+                    let pointer = lo.wrapping_add($cpu.x());
+                    let addr_lo = fetch_byte_from_addr!($yielder, $cpu, pointer, 0);
+                    let addr_hi = fetch_byte_from_addr!($yielder, $cpu, pointer.wrapping_add(1), 0);
+                    (addr_lo, addr_hi)
+                }
+                IndirectY => {
+                    let addr_lo = fetch_byte_from_addr!($yielder, $cpu, lo, 0);
+                    let addr_hi = fetch_byte_from_addr!($yielder, $cpu, lo.wrapping_add(1), 0);
+                    let res = u16::from_le_bytes([addr_lo, addr_hi])
+                        .wrapping_add($cpu.y().into())
+                        .to_le_bytes();
+                    if res[1] != addr_hi {
+                        // additional read in case of crossing page boundary
+                        fetch_byte_from_addr!($yielder, $cpu, res[0], addr_hi);
+                    }
+                    res.into()
+                }
                 _ => panic!(
                     "Can't decode address for {:?} address mode",
                     $op.address_mode
@@ -654,8 +673,8 @@ mod macros {
 
     pub(super) use decode_address;
     pub(super) use fetch_byte_and_inc_pc;
-    pub(super) use fetch_byte_from_pc;
     pub(super) use fetch_byte_from_addr;
+    pub(super) use fetch_byte_from_pc;
     pub(super) use push_to_stack_and_dec_sp;
     pub(super) use read_and_inc_pc;
     pub(super) use request_read_from_pc;

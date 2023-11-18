@@ -40,14 +40,14 @@ fn op_to_string(def: &OperationDef, operand: &Operand) -> String {
         Immediate => format!("{} #${}", m, o),
         Relative => format!("{} ${}", m, o),
         ZeroPage => format!("{} ${}", m, o),
-        ZeroPageX => format!("{} ${}, X", m, o),
-        ZeroPageY => format!("{} ${}, Y", m, o),
+        ZeroPageX => format!("{} ${},X", m, o),
+        ZeroPageY => format!("{} ${},Y", m, o),
         Absolute => format!("{} ${}", m, o),
-        AbsoluteX => format!("{} ${}, X", m, o),
-        AbsoluteY => format!("{} ${}, Y", m, o),
+        AbsoluteX => format!("{} ${},X", m, o),
+        AbsoluteY => format!("{} ${},Y", m, o),
         Indirect => format!("{} (${})", m, o),
-        IndirectX => format!("{} (${}, X)", m, o),
-        IndirectY => format!("{}, (${}), Y", m, o),
+        IndirectX => format!("{} (${},X)", m, o),
+        IndirectY => format!("{} (${}),Y", m, o),
     }
 }
 

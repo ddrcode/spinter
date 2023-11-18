@@ -8,7 +8,7 @@ pub mod debugger;
 
 use anyhow::Result;
 use emulator::abstractions::Machine;
-use machines::ben_eater::BenEaterMachine;
+use machines::simplified_c64::SimplifiedC64Machine;
 use std::io::Read;
 use std::{fs::File, path::PathBuf};
 
@@ -22,13 +22,14 @@ pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
 fn main() -> Result<()> {
 
     // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/add-sub-16bit.p"))?;
-    let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
+    // let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
+    let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/kernal-64c.251913-01.bin"))?;
     let kernal = &rom[8192..];
     let basic = &rom[..8192];
-    let blank = [0u8; 0x1fff];
+    let blank = [0u8; 0x2000];
     let program = [basic, &blank, kernal].concat();
 
-    let mut be = BenEaterMachine::with_program(0x200, &program).unwrap();
+    let mut be = SimplifiedC64Machine::with_program(0xa000, &program).unwrap();
     be.start();
 
     Ok(())
