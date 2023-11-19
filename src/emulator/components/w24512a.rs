@@ -108,7 +108,7 @@ impl W24512APins {
     }
 }
 
-impl Pins for W24512APins  {
+impl Pins for W24512APins {
     fn pins(&self) -> &[Rc<Pin>] {
         &self.pins
     }

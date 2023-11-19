@@ -22,8 +22,8 @@ pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
 fn main() -> Result<()> {
 
     // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/add-sub-16bit.p"))?;
-    let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
-    // let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/kernal-64c.251913-01.bin"))?;
+    // let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
+    let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/kernal-64c.251913-01.bin"))?;
     let kernal = &rom[8192..];
     let basic = &rom[..8192];
     let blank = [0u8; 0x2000];

@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 const CIRCUIT_MESSAGE_CAP: usize = 0;
-const COMPONENT_MESSAGE_CAP: usize = 0;
+const COMPONENT_MESSAGE_CAP: usize = 100;
 
 //--------------------------------------------------------------------
 // PinMessage
@@ -158,9 +158,7 @@ impl CircuitBuilder {
                     comp.init();
                     thread::sleep(Duration::from_millis(300));
                     loop {
-                        println!("czekam {}", comp.ctx().component_name);
                         let msg_res = comp.ctx().receiver.recv();
-                        println!("!!!!! {}", comp.ctx().component_name);
                         if let Err(e) = msg_res {
                             println!(
                                 "Reading msg failed in {} with {:?}",
@@ -217,8 +215,12 @@ pub struct Circuit {
 impl Circuit {
     pub fn tick(&self) {
         let val = *self.state.borrow();
-        // println!("ticked");
-        // self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
+        println!("ticked");
         *self.state.borrow_mut() = !val;
+        self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
+    }
+
+    pub fn has_messages(&self) -> bool {
+        self.components.values().any(|x| { !x.sender.is_empty() })
     }
 }

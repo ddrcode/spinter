@@ -1,6 +1,6 @@
-use std::{thread, time::Duration};
+use std::{thread, time::{Duration, Instant}};
 
-use crossbeam_channel::TryRecvError;
+use crossbeam_channel::{TryRecvError, RecvTimeoutError};
 
 use crate::emulator::{
     abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine, PinMessage},
@@ -52,13 +52,20 @@ impl SimplifiedC64Machine {
     }
 }
 
+static CYCLE: Duration = Duration::from_micros(10000);
+
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
         thread::sleep(Duration::from_millis(800));
         self.reset();
+        let mut cycle_duration = Instant::now();
         loop {
             self.step();
-            thread::sleep(Duration::from_micros(1000));
+            if cycle_duration.elapsed() > CYCLE && !self.circuit.has_messages() {
+                self.circuit.tick();
+                cycle_duration = Instant::now();
+            }
+            // thread::sleep(Duration::from_micros(1000));
         }
     }
 
@@ -82,9 +89,15 @@ impl Machine for SimplifiedC64Machine {
         // let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
         // self.circuit.tick();
         // loop {
-            let res = self.circuit.receiver.recv();
+            let res = self.circuit.receiver.recv_timeout(Duration::from_micros(500));
             if let Err(e) = res {
-                println!("Mamy blad {:?}", e);
+                match e {
+                    RecvTimeoutError::Timeout => {
+                        println!("Timeout");
+                        return ()
+                    },
+                    _ => println!("Message read error {:?}", e),
+                }
             }
             //     match e {
             //         TryRecvError::Empty => {
@@ -100,7 +113,6 @@ impl Machine for SimplifiedC64Machine {
             //     }
             // }
             let msg = res.unwrap();
-            println!("Jest msg {:?}", msg);
             if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
                 for (comp, pin) in links.iter() {
                     self.circuit.components[comp]

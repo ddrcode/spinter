@@ -45,14 +45,12 @@ impl Component for W65C02 {
     fn on_pin_state_change(&mut self, pin_name: &str, val: bool) {
         match pin_name {
             "PHI2" => {
-                println!("Cpu is ticking");
                 self.pins["PHI1O"].write(!val).unwrap();
                 self.pins["PHI2O"].write(val).unwrap();
                 self.logic.tick(val);
                 if val {
                     self.logic.advance_cycles();
                 }
-                println!("Cpu tick end");
             }
             _ => {}
         };
@@ -83,10 +81,8 @@ impl W65C02Logic {
         let v = self.stepper.resume(self.state.clone());
         match v {
             CoroutineResult::Yield(()) => {
-                println!("yield");
             }
             CoroutineResult::Return(res) => {
-                println!("completed");
                 self.state = res.cpu;
                 if res.completed {
                     self.debug(&res.operand);
@@ -95,21 +91,17 @@ impl W65C02Logic {
                     let op = self.decode_op(&self.state.ir());
                     let s = get_stepper(&op);
                     if s.is_none() {
-                        println!("Panika! empty stepper");
                         panic!(
                             "There is no stepper for current IR: {:#02x} (mnemonic: {:?})",
                             self.state.ir(),
                             mnemonic_from_opcode(self.state.ir())
                         );
                     }
-                    println!("mam stepper");
                     s.unwrap()
                 } else {
                     if phase != false {
-                        println!("Panika! zla faza");
                         panic!("New instruction must start with phase high");
                     }
-                    println!("biore opcode");
                     read_opcode()
                 }
             }

@@ -46,11 +46,10 @@ impl Component for Oscilator {
     }
 
     fn init(&mut self) {
-        loop {
-        thread::sleep(Duration::from_millis(900));
-        println!("Oscilator tick");
-        self.tick();
-        }
+        // loop {
+        // thread::sleep(Duration::from_millis(10));
+        // self.tick();
+        // }
     }
 }
 

@@ -43,7 +43,6 @@ pub fn init_stepper() -> Stepper {
         // let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
         // cpu.set_pch(hi);
         cpu.set_pc(0xfce2);
-        println!("PC IS SET TO {:04x}", cpu.pc());
         yielder.suspend(());
         StepperResult::partial(false, cpu)
     })
@@ -523,11 +522,9 @@ fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
 }
 
 fn request_opcode(cpu: &Input) {
-    cpu.pins
-        .set_sync(true)
-        .set_data_direction(PinDirection::Input)
-        .addr
-        .write(cpu.pc());
+    cpu.pins.set_sync(true);
+    cpu.pins.set_data_direction(PinDirection::Input);
+    cpu.pins.addr.write(cpu.pc());
 }
 
 fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
