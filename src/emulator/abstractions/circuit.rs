@@ -8,8 +8,8 @@ use std::ops::Range;
 use std::thread;
 use std::time::Duration;
 
-const CIRCUIT_MESSAGE_CAP: usize = 100;
-const COMPONENT_MESSAGE_CAP: usize = 100;
+const CIRCUIT_MESSAGE_CAP: usize = 0;
+const COMPONENT_MESSAGE_CAP: usize = 0;
 
 //--------------------------------------------------------------------
 // PinMessage
@@ -155,10 +155,12 @@ impl CircuitBuilder {
                 .name(name.clone())
                 .spawn(move || {
                     comp.attach(ctx);
-                    thread::sleep(Duration::from_millis(500));
                     comp.init();
+                    thread::sleep(Duration::from_millis(300));
                     loop {
+                        println!("czekam {}", comp.ctx().component_name);
                         let msg_res = comp.ctx().receiver.recv();
+                        println!("!!!!! {}", comp.ctx().component_name);
                         if let Err(e) = msg_res {
                             println!(
                                 "Reading msg failed in {} with {:?}",
@@ -215,7 +217,8 @@ pub struct Circuit {
 impl Circuit {
     pub fn tick(&self) {
         let val = *self.state.borrow();
-        self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
+        // println!("ticked");
+        // self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
         *self.state.borrow_mut() = !val;
     }
 }

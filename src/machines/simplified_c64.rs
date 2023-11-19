@@ -54,11 +54,11 @@ impl SimplifiedC64Machine {
 
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
-        thread::sleep(Duration::from_millis(500));
+        thread::sleep(Duration::from_millis(800));
         self.reset();
         loop {
             self.step();
-            thread::sleep(Duration::from_micros(100));
+            thread::sleep(Duration::from_micros(1000));
         }
     }
 
@@ -79,25 +79,28 @@ impl Machine for SimplifiedC64Machine {
     }
 
     fn step(&self) {
-        let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
-        self.circuit.tick();
-        loop {
-            let res = self.circuit.receiver.try_recv();
+        // let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
+        // self.circuit.tick();
+        // loop {
+            let res = self.circuit.receiver.recv();
             if let Err(e) = res {
-                match e {
-                    TryRecvError::Empty => {
-                        threshold -= 1;
-                        if threshold == 0 {//|| !*self.circuit.state.borrow() {
-                            break;
-                        }
-                        continue;
-                    }
-                    TryRecvError::Disconnected => {
-                        panic!("Channel disconnected");
-                    }
-                }
+                println!("Mamy blad {:?}", e);
             }
+            //     match e {
+            //         TryRecvError::Empty => {
+            //             threshold -= 1;
+            //             if threshold == 0 {//|| !*self.circuit.state.borrow() {
+            //                 break;
+            //             }
+            //             continue;
+            //         }
+            //         TryRecvError::Disconnected => {
+            //             panic!("Channel disconnected");
+            //         }
+            //     }
+            // }
             let msg = res.unwrap();
+            println!("Jest msg {:?}", msg);
             if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
                 for (comp, pin) in links.iter() {
                     self.circuit.components[comp]
@@ -106,7 +109,7 @@ impl Machine for SimplifiedC64Machine {
                         .unwrap();
                 }
             }
-        }
+        // }
     }
 }
 

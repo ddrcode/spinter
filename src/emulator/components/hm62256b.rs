@@ -244,6 +244,7 @@ impl<T: RAM + 'static> Component for HM62256B<T> {
     }
 
     fn on_pin_state_change(&mut self, pin_name: &str, val: bool) {
+        println!("Memorka");
         match pin_name {
             "CS" => self.set_enable(!val),
             "WE" => self.set_data_direction(val),
