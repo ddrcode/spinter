@@ -1,10 +1,13 @@
-use std::{thread, time::{Duration, Instant}};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
-use crossbeam_channel::{TryRecvError, RecvTimeoutError};
+use crossbeam_channel::{RecvTimeoutError, TryRecvError};
 
 use crate::emulator::{
     abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine, PinMessage},
-    components::{W24512ALogic, Oscilator, W24512A},
+    components::{Oscilator, W24512ALogic, W24512A},
     cpus::W65C02,
     EmulatorError,
 };
@@ -52,7 +55,7 @@ impl SimplifiedC64Machine {
     }
 }
 
-static CYCLE: Duration = Duration::from_micros(10000);
+static CYCLE: Duration = Duration::from_micros(1000);
 
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
@@ -89,39 +92,43 @@ impl Machine for SimplifiedC64Machine {
         // let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
         // self.circuit.tick();
         // loop {
-            let res = self.circuit.receiver.recv_timeout(Duration::from_micros(500));
-            if let Err(e) = res {
-                match e {
-                    RecvTimeoutError::Timeout => {
-                        println!("Timeout");
-                        return ()
-                    },
-                    _ => println!("Message read error {:?}", e),
+        let res = self
+            .circuit
+            .receiver
+            .recv_timeout(Duration::from_micros(10));
+        if let Err(e) = res {
+            match e {
+                RecvTimeoutError::Timeout => {
+                    // println!("Timeout");
+                    return ();
+                }
+                _ => {
+                    println!("Message read error {:?}", e)
                 }
             }
-            //     match e {
-            //         TryRecvError::Empty => {
-            //             threshold -= 1;
-            //             if threshold == 0 {//|| !*self.circuit.state.borrow() {
-            //                 break;
-            //             }
-            //             continue;
-            //         }
-            //         TryRecvError::Disconnected => {
-            //             panic!("Channel disconnected");
-            //         }
-            //     }
-            // }
-            let msg = res.unwrap();
-            if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
-                for (comp, pin) in links.iter() {
-                    self.circuit.components[comp]
-                        .sender
-                        .send(PinMessage::new(comp, pin, msg.val))
-                        .unwrap();
-                }
+        }
+        //     match e {
+        //         TryRecvError::Empty => {
+        //             threshold -= 1;
+        //             if threshold == 0 {//|| !*self.circuit.state.borrow() {
+        //                 break;
+        //             }
+        //             continue;
+        //         }
+        //         TryRecvError::Disconnected => {
+        //             panic!("Channel disconnected");
+        //         }
+        //     }
+        // }
+        let msg = res.unwrap();
+        if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
+            for (comp, pin) in links.iter() {
+                self.circuit.components[comp]
+                    .sender
+                    .send(PinMessage::new(comp, pin, msg.val))
+                    .unwrap();
             }
+        }
         // }
     }
 }
-

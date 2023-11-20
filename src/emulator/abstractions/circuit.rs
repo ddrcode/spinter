@@ -215,9 +215,11 @@ pub struct Circuit {
 impl Circuit {
     pub fn tick(&self) {
         let val = *self.state.borrow();
-        println!("ticked");
         *self.state.borrow_mut() = !val;
-        self.sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
+        let sender = self.sender.clone();
+        thread::spawn(move || {
+            sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
+        });
     }
 
     pub fn has_messages(&self) -> bool {
