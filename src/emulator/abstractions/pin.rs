@@ -1,7 +1,9 @@
-use super::{CircuitCtx, PinMessage};
-use crate::emulator::EmulatorError;
+use std::{
+    cell::{OnceCell, RefCell},
+    rc::Rc,
+};
 
-use std::cell::{OnceCell, RefCell};
+use crate::emulator::EmulatorError;
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum PinDirection {
@@ -50,9 +52,9 @@ pub struct Pin {
     value: RefCell<bool>,
     enabled: RefCell<bool>,
     direction: RefCell<PinDirection>,
+    handler: OnceCell<Rc<RefCell<dyn PinStateChange>>>,
     tri_state: bool,
     io: bool,
-    ctx: OnceCell<CircuitCtx>,
 }
 
 impl Into<u8> for Pin {
@@ -71,9 +73,9 @@ impl Pin {
             value: RefCell::new(false),
             enabled: RefCell::new(true),
             direction: RefCell::new(direction),
+            handler: OnceCell::new(),
             tri_state,
             io,
-            ctx: OnceCell::new(),
         }
     }
 
@@ -91,6 +93,15 @@ impl Pin {
 
     pub fn set_group_id(&self, id: u8) {
         self.group_id.set(id).unwrap();
+    }
+
+    pub(crate) fn set_handler(
+        &self,
+        handler: Rc<RefCell<dyn PinStateChange>>,
+    ) -> Result<(), EmulatorError> {
+        self.handler
+            .set(handler)
+            .map_err(|_| EmulatorError::HandlerAlreadyDefined(self.name()))
     }
 
     pub fn set_enable(&self, val: bool) -> Result<(), EmulatorError> {
@@ -130,7 +141,8 @@ impl Pin {
     pub fn group_name(&self) -> Option<String> {
         let group_id = self.group_id();
         if group_id.is_some() {
-            Some(self.name.clone())
+            let name = &self.name;
+            Some(name.to_string())
         } else {
             None
         }
@@ -158,7 +170,7 @@ impl Pin {
     }
 
     pub fn enabled(&self) -> bool {
-        *self.enabled.borrow()
+        true
     }
 
     pub fn state(&self) -> bool {
@@ -170,17 +182,13 @@ impl Pin {
     }
 
     pub fn write(&self, val: bool) -> Result<bool, EmulatorError> {
-        if !self.enabled() {
-            Ok(false)
-        } else if self.is_output() {
+        if self.is_output() {
             if *self.value.borrow() == val {
                 return Ok(false);
             }
             *self.value.borrow_mut() = val;
-            if let Some(ctx) = self.ctx.get() {
-                ctx.sender
-                    .send(PinMessage::new(&ctx.component_name, &self.name(), val))
-                    .unwrap();
+            if let Some(handler) = self.handler.get() {
+                handler.borrow().on_state_change(self);
             }
             Ok(true)
         } else {
@@ -230,14 +238,10 @@ impl Pin {
     pub(crate) fn set_inner_id(&self, id: u32) {
         let _ = self.inner_id.set(id);
     }
-
-    pub(crate) fn set_context(&self, ctx: CircuitCtx) {
-        self.ctx.set(ctx).unwrap();
-    }
 }
 
 pub trait PinStateChange {
-    fn on_state_change(&mut self, pin: &Pin);
+    fn on_state_change(&self, pin: &Pin);
 }
 
 #[cfg(test)]

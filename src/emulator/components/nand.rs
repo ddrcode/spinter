@@ -40,7 +40,7 @@ impl<T: INand + 'static> Nand<T> {
 }
 
 impl<T: INand> PinStateChange for Nand<T> {
-    fn on_state_change(&mut self, _pin: &Pin) {
+    fn on_state_change(&self, _pin: &Pin) {
         let val = self
             .logic
             .execute(self.pins.in1.read(), self.pins.in2.read());

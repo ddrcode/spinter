@@ -1,5 +1,5 @@
 use crate::emulator::abstractions::{
-    Addr, Addressable, CircuitCtx, Component, Pin, PinBuilder,
+    Addr, Addressable, Component, Pin, PinBuilder, PinStateChange,
     PinDirection::{self, *},
     Pins, Port, RAM,
 };
@@ -154,8 +154,8 @@ impl Addressable for HM62256BLogic {
         self.data[addr as usize]
     }
 
-    fn write_byte(&mut self, addr: Addr, value: u8) {
-        self.data[addr as usize] = value;
+    fn write_byte(&self, addr: Addr, value: u8) {
+        // self.data[addr as usize] = value;
     }
 
     fn address_width(&self) -> u16 {
@@ -171,7 +171,6 @@ impl RAM for HM62256BLogic {}
 pub struct HM62256B<T: Addressable> {
     pub pins: Rc<HM62256BPins>,
     pub logic: T,
-    ctx: CircuitCtx,
 }
 
 impl<T: RAM> HM62256B<T> {
@@ -180,7 +179,6 @@ impl<T: RAM> HM62256B<T> {
         HM62256B {
             pins,
             logic,
-            ctx: Default::default(),
         }
     }
 
@@ -196,7 +194,7 @@ impl<T: RAM> HM62256B<T> {
         self.is_enabled() && !self.can_write() && self.pins["OE"].low()
     }
 
-    fn write_byte(&mut self) {
+    fn write_byte(&self) {
         if self.can_write() {
             let addr = self.pins.addr.read();
             let byte = self.pins.data.read();
@@ -235,24 +233,20 @@ impl<T: RAM + 'static> Component for HM62256B<T> {
         self.pins.by_name(name)
     }
 
-    fn ctx(&self) -> &CircuitCtx {
-        &self.ctx
-    }
+}
 
-    fn attach(&mut self, ctx: CircuitCtx) {
-        self.ctx = ctx;
-    }
-
-    fn on_pin_state_change(&mut self, pin_name: &str, val: bool) {
-        match pin_name {
+impl<T: RAM+'static> PinStateChange for HM62256B<T> {
+    fn on_state_change(&self, pin: &Pin) {
+        let val = pin.state();
+        match pin.name().as_str() {
             "CS" => self.set_enable(!val),
             "WE" => self.set_data_direction(val),
             "OE" => self.set_data_direction(!val || self.pins["WE"].high()),
             _ => {
-                if let Some(gn) = self.pins[pin_name].group_name() {
+                if let Some(gn) = pin.group_name() {
                     match gn.as_str() {
                         "A" => self.read_byte(),
-                        "D" => self.write_byte(),
+                        // "D" => self.write_byte(),
                         _ => {}
                     }
                 }
@@ -272,7 +266,7 @@ mod tests {
 
     fn set_input(mem: &mut MEM, pin_name: &str, val: bool) {
         mem.pins[pin_name].set_val(val);
-        mem.on_pin_state_change(pin_name, val);
+        mem.on_state_change(pin_name, val);
     }
 
     fn set_state(mem: &mut MEM, cs: bool, we: bool, oe: bool) {

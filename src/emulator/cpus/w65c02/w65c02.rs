@@ -1,8 +1,9 @@
 use corosensei::CoroutineResult;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::debugger::OperationDebug;
-use crate::emulator::abstractions::{CPUCycles, CircuitCtx, Component, Pin, Pins};
+use crate::emulator::abstractions::{CPUCycles, Component, Pin, PinStateChange, Pins};
 use crate::emulator::cpus::mos6502::{
     get_stepper, init_stepper, mnemonic_from_opcode, read_opcode, Operand, OperationDef, Stepper,
     OPERATIONS,
@@ -14,7 +15,6 @@ use super::{CpuState, W65C02_Pins};
 pub struct W65C02 {
     pub pins: Rc<W65C02_Pins>,
     logic: W65C02Logic,
-    ctx: CircuitCtx,
 }
 
 impl W65C02 {
@@ -24,7 +24,6 @@ impl W65C02 {
         W65C02 {
             pins,
             logic,
-            ctx: Default::default(),
         }
     }
 }
@@ -34,16 +33,12 @@ impl Component for W65C02 {
         self.pins.by_name(name)
     }
 
-    fn ctx(&self) -> &CircuitCtx {
-        &self.ctx
-    }
+}
 
-    fn attach(&mut self, ctx: CircuitCtx) {
-        self.ctx = ctx;
-    }
-
-    fn on_pin_state_change(&mut self, pin_name: &str, val: bool) {
-        match pin_name {
+impl PinStateChange for W65C02 {
+    fn on_state_change(&self, pin: &Pin) {
+        let val = pin.state();
+        match pin.name().as_str() {
             "PHI2" => {
                 self.pins["PHI1O"].write(!val).unwrap();
                 self.pins["PHI2O"].write(val).unwrap();
@@ -61,48 +56,47 @@ impl Component for W65C02 {
 // W65C02Logic
 
 pub struct W65C02Logic {
-    stepper: Stepper,
-    cycles: CPUCycles,
-    state: CpuState,
+    stepper: RefCell<Stepper>,
+    cycles: RefCell<CPUCycles>,
+    state: RefCell<CpuState>,
 }
 
 impl W65C02Logic {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         let logic = W65C02Logic {
-            state: CpuState::new(pins),
-            stepper: init_stepper(),
-            cycles: 0,
+            state: RefCell::new(CpuState::new(pins)),
+            stepper: RefCell::new(init_stepper()),
+            cycles: RefCell::new(0),
         };
 
         logic
     }
 
-    pub fn tick(&mut self, phase: bool) {
-        let v = self.stepper.resume(self.state.clone());
+    pub fn tick(&self, phase: bool) {
+        let v = self.stepper.borrow_mut().resume(self.state.borrow().clone());
         match v {
-            CoroutineResult::Yield(()) => {
-            }
+            CoroutineResult::Yield(()) => {}
             CoroutineResult::Return(res) => {
-                self.state = res.cpu;
+                *self.state.borrow_mut() = res.cpu.into();
                 if res.completed {
                     self.debug(&res.operand);
                 }
-                self.stepper = if res.has_opcode {
-                    let op = self.decode_op(&self.state.ir());
+                *self.stepper.borrow_mut() = if res.has_opcode {
+                    let op = self.decode_op(&self.state.borrow().ir());
                     let s = get_stepper(&op);
                     if s.is_none() {
                         panic!(
                             "There is no stepper for current IR: {:#02x} (mnemonic: {:?})",
-                            self.state.ir(),
-                            mnemonic_from_opcode(self.state.ir())
+                            self.state.borrow().ir(),
+                            mnemonic_from_opcode(self.state.borrow().ir())
                         );
                     }
-                    s.unwrap()
+                    s.unwrap().into()
                 } else {
                     if phase != false {
                         panic!("New instruction must start with phase high");
                     }
-                    read_opcode()
+                    read_opcode().into()
                 }
             }
         }
@@ -114,22 +108,23 @@ impl W65C02Logic {
             None => panic!(
                 "Opcode {:#04x} not found at address {:#06x}",
                 opcode,
-                self.state.pc()
+                self.state.borrow().pc()
             ),
         }
     }
 
-    fn advance_cycles(&mut self) {
-        self.cycles = self.cycles.wrapping_add(1);
+    fn advance_cycles(&self) {
+        let val = self.cycles.borrow().wrapping_add(1);
+        *self.cycles.borrow_mut() = val;
     }
 
     fn debug(&self, operand: &Operand) {
         let cpu = &self.state;
         let s = OperationDebug {
-            reg: cpu.regs().clone(),
-            opcode: cpu.ir(),
+            reg: cpu.borrow().regs().clone(),
+            opcode: cpu.borrow().ir(),
             operand: operand.clone(),
-            cycle: self.cycles,
+            cycle: *self.cycles.borrow(),
         };
         println!("{}", s);
     }

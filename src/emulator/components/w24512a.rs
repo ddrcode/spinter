@@ -1,9 +1,9 @@
 use crate::emulator::abstractions::{
-    Addr, Addressable, CircuitCtx, Component, Pin, PinBuilder,
+    Addr, Addressable, Component, Pin, PinBuilder, PinStateChange,
     PinDirection::{self, *},
     Pins, Port, RAM,
 };
-use std::rc::Rc;
+use std::{rc::Rc, cell::RefCell};
 use std::{collections::HashMap, fmt, ops::Index};
 
 //--------------------------------------------------------------------
@@ -139,29 +139,30 @@ impl fmt::Debug for W24512APins {
 // LOGIC
 
 pub struct W24512ALogic {
-    data: [u8; 1 << 16],
+    data: RefCell<[u8; 1 << 16]>,
 }
 
 impl W24512ALogic {
     pub fn new() -> Self {
-        W24512ALogic { data: [0; 1 << 16] }
+        W24512ALogic { data: RefCell::new([0; 1 << 16]) }
     }
 
     pub fn load(&mut self, addr: Addr, data: &[u8]) {
         let a = addr as usize;
+        let mut ram = self.data.borrow_mut();
         for i in a..(a + data.len()) {
-            self.data[i] = data[i - a];
+            ram[i] = data[i - a];
         }
     }
 }
 
 impl Addressable for W24512ALogic {
     fn read_byte(&self, addr: Addr) -> u8 {
-        self.data[addr as usize]
+        self.data.borrow()[addr as usize]
     }
 
-    fn write_byte(&mut self, addr: Addr, value: u8) {
-        self.data[addr as usize] = value;
+    fn write_byte(&self, addr: Addr, value: u8) {
+        self.data.borrow_mut()[addr as usize] = value;
     }
 
     fn address_width(&self) -> u16 {
@@ -177,7 +178,6 @@ impl RAM for W24512ALogic {}
 pub struct W24512A<T: Addressable> {
     pub pins: Rc<W24512APins>,
     pub logic: T,
-    ctx: CircuitCtx,
 }
 
 impl<T: RAM> W24512A<T> {
@@ -186,7 +186,6 @@ impl<T: RAM> W24512A<T> {
         W24512A {
             pins,
             logic,
-            ctx: Default::default(),
         }
     }
 
@@ -203,7 +202,7 @@ impl<T: RAM> W24512A<T> {
         self.is_enabled() && !self.can_write() && self.pins["OE"].low()
     }
 
-    fn write_byte(&mut self) {
+    fn write_byte(&self) {
         if self.can_write() {
             let addr = self.pins.addr.read();
             let byte = self.pins.data.read();
@@ -243,21 +242,18 @@ impl<T: RAM + 'static> Component for W24512A<T> {
         self.pins.by_name(name)
     }
 
-    fn ctx(&self) -> &CircuitCtx {
-        &self.ctx
-    }
+}
 
-    fn attach(&mut self, ctx: CircuitCtx) {
-        self.ctx = ctx;
-    }
+impl<T: RAM + 'static> PinStateChange for W24512A<T> {
 
-    fn on_pin_state_change(&mut self, pin_name: &str, val: bool) {
-        match pin_name {
+    fn on_state_change(&self, pin: &Pin) {
+        let val = pin.state();
+        match pin.name().as_str() {
             "C1" | "CS2" => self.set_enable(),
             "WE" => self.set_data_direction(val),
             "OE" => self.set_data_direction(!val || self.pins["WE"].high()),
             _ => {
-                if let Some(gn) = self.pins[pin_name].group_name() {
+                if let Some(gn) = pin.group_name() {
                     match gn.as_str() {
                         "A" => self.read_byte(),
                         "D" => self.write_byte(),

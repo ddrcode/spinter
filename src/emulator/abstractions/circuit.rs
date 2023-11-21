@@ -1,93 +1,159 @@
-use crate::debugger::DebugMessage;
+use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
-use super::Component;
-use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::ops::Range;
-use std::thread;
-use std::time::Duration;
+use crate::{emulator::EmulatorError, utils::if_else};
 
-const CIRCUIT_MESSAGE_CAP: usize = 0;
-const COMPONENT_MESSAGE_CAP: usize = 100;
+use super::{Component, Pin, PinStateChange};
 
-//--------------------------------------------------------------------
-// PinMessage
-#[derive(Default, Debug)]
-pub struct PinMessage {
-    pub component: String,
-    pub pin: String,
-    pub val: bool,
+pub struct Circuit {
+    pins: HashMap<u32, (String, String)>,
+    connections: HashMap<u32, u32>,
+    // QUESTION #1
+    // I use RefCell, because I need a mutable reference to
+    // components - to call on_pin_state_change.
+    // Are there any other ways to avoid it?
+    components: HashMap<String, RefCell<Box<dyn Component>>>,
 }
 
-impl PinMessage {
-    pub fn new(component: &str, pin: &str, val: bool) -> Self {
-        PinMessage {
-            component: component.to_string(),
-            pin: pin.to_string(),
-            val,
+impl Circuit {
+    pub fn component(&self, name: &str) -> &RefCell<Box<dyn Component>> {
+        &self.components[name]
+    }
+
+    pub fn with_pin(&self, component_name: &str, pin_name: &str, cb: impl FnOnce(&Pin)) {
+        let c = self.component(component_name).borrow();
+        if let Some(pin) = c.get_pin(pin_name) {
+            cb(pin);
         }
     }
-}
-//--------------------------------------------------------------------
-// CircuitCtx
 
-#[derive(Clone, Debug)]
-pub struct CircuitCtx {
-    pub(crate) component_name: String,
-    pub(crate) sender: Sender<PinMessage>,
-    pub(crate) receiver: Receiver<PinMessage>,
-}
-
-impl CircuitCtx {
-    pub fn new(
+    pub fn write_to_pin(
+        &self,
         component_name: &str,
-        sender: Sender<PinMessage>,
-        receiver: Receiver<PinMessage>,
-    ) -> Self {
-        CircuitCtx {
-            component_name: component_name.to_string(),
-            sender,
-            receiver,
-        }
-    }
-
-    pub fn debug(&self, msg: DebugMessage) {
-        println!("{}", msg);
-    }
-}
-
-impl Default for CircuitCtx {
-    fn default() -> Self {
-        let (sender, receiver) = unbounded();
-        Self {
-            component_name: Default::default(),
-            sender,
-            receiver,
+        pin_name: &str,
+        val: bool,
+    ) -> Result<bool, EmulatorError> {
+        let c = self.component(component_name).borrow();
+        if let Some(pin) = c.get_pin(pin_name) {
+            pin.write(val)
+        } else {
+            Err(EmulatorError::PinNotFound(
+                component_name.to_string(),
+                pin_name.to_string(),
+            ))
         }
     }
 }
 
-//--------------------------------------------------------------------
+// --------------------------------------------------------------------
+// Circuit Pin handler
+// This is where the magic happens - it makes the circuit "reactive"
+// for every pin state change.
+
+struct CircuitPinHandler(Rc<Circuit>);
+
+impl PinStateChange for CircuitPinHandler {
+    fn on_state_change(&self, pin: &Pin) {
+        let id = pin.inner_id().unwrap();
+
+        let (component_id, reader_pin_name) = {
+            let circuit = &self.0;
+            let reader_id = circuit.connections[&id];
+            circuit.pins[&reader_id].clone()
+        };
+
+
+        let rpin = {
+            let c = self.0.components[&component_id].borrow();
+            let p = c.get_pin(&reader_pin_name).unwrap();
+            p.set_val(pin.state());
+            p.clone()
+        };
+
+        // Would be great if I could use hasmap's get_mut here,
+        // but I can't, because self.0 is a Rc<Circuit>
+        // QUESTION #2: is there any option to fix it?
+        let component = self.0.components[&component_id].borrow();
+        // println!("Reader pin: {}, {}", rpin.name(), rpin.inner_id().unwrap());
+
+        // println!("Updating compoent {}", component_id);
+        component.on_state_change(&rpin);
+    }
+}
+
+// --------------------------------------------------------------------
+// Power supply :-)
+
+struct Power {
+    vcc: Pin,
+    gnd: Pin,
+}
+
+impl Power {
+    fn new() -> Power {
+        let p = Power {
+            vcc: Pin::output("VCC"),
+            gnd: Pin::input("GND"),
+        };
+        p.vcc.set_high().unwrap();
+        p.gnd.set_val(false);
+        p
+    }
+}
+
+impl Component for Power {
+    fn get_pin(&self, name: &str) -> Option<&Pin> {
+        if_else(name == "VCC", Some(&self.vcc), None)
+    }
+}
+
+impl PinStateChange for Power {
+    fn on_state_change(&self, _pin: &Pin) {}
+}
+
+
+// --------------------------------------------------------------------
 // CircuitBuilder
+// Helps building circuits
 
 pub struct CircuitBuilder {
-    components: HashMap<String, Box<dyn Component>>,
-    links: HashMap<String, HashMap<String, HashSet<(String, String)>>>,
+    components: Option<HashMap<String, RefCell<Box<dyn Component>>>>,
+    pins: HashMap<u32, (String, String)>,
+    last_pin_id: u32,
+    connections: HashMap<u32, u32>,
 }
 
 impl CircuitBuilder {
     pub fn new() -> Self {
-        CircuitBuilder {
-            components: HashMap::new(),
-            links: HashMap::new(),
-        }
+        let mut cb = CircuitBuilder {
+            components: Some(HashMap::new()),
+            pins: HashMap::new(),
+            last_pin_id: 2,
+            connections: HashMap::new(),
+        };
+
+        cb.add_component("POW", Power::new());
+        cb
     }
 
-    pub fn add_component(&mut self, name: &str, comp: impl Component + 'static) -> &mut Self {
-        self.components.insert(name.to_string(), Box::new(comp));
-
+    pub fn add_component(&mut self, name: &str, cmp: impl Component + 'static) -> &mut Self {
+        self.components
+            .as_mut()
+            .unwrap()
+            .insert(name.to_string(), RefCell::new(Box::new(cmp)));
         self
+    }
+
+    fn add_pin(&mut self, component_name: &str, pin_name: &str) -> u32 {
+        self.pins.insert(
+            self.last_pin_id,
+            (component_name.to_string(), pin_name.to_string()),
+        );
+        self.last_pin_id += 1;
+        self.last_pin_id - 1
+    }
+
+    fn add_connection(&mut self, writer_id: u32, reader_id: u32) {
+        self.connections.insert(writer_id, reader_id);
     }
 
     pub fn link(
@@ -97,23 +163,9 @@ impl CircuitBuilder {
         reader_name: &str,
         reader_pin_name: &str,
     ) -> &mut Self {
-        if !self.links.contains_key(writer_name) {
-            self.links.insert(writer_name.to_string(), HashMap::new());
-        }
-
-        if !self.links[writer_name].contains_key(writer_pin_name) {
-            self.links
-                .get_mut(writer_name)
-                .unwrap()
-                .insert(writer_pin_name.to_string(), HashSet::new());
-        }
-
-        self.links
-            .get_mut(writer_name)
-            .unwrap()
-            .get_mut(writer_pin_name)
-            .unwrap()
-            .insert((reader_name.to_string(), reader_pin_name.to_string()));
+        let writer_id = self.add_pin(writer_name, writer_pin_name);
+        let reader_id = self.add_pin(reader_name, reader_pin_name);
+        self.add_connection(writer_id, reader_id);
 
         self
     }
@@ -137,92 +189,57 @@ impl CircuitBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Circuit {
-        let mut components: HashMap<String, CircuitNode> =
-            HashMap::with_capacity(self.components.len());
-        let (sender, receiver) = bounded::<PinMessage>(CIRCUIT_MESSAGE_CAP);
+    pub fn link_to_vcc(&mut self, component_name: &str, pin_name: &str) -> &mut Self {
+        self.link("POW", "VCC", component_name, pin_name)
+    }
 
-        for (name, mut comp) in self.components.drain() {
-            let (s, r) = bounded::<PinMessage>(COMPONENT_MESSAGE_CAP);
-            let ctx = CircuitCtx::new(&name, sender.clone(), r);
-            let links = self.links.remove(&name).unwrap_or(HashMap::new());
+    pub fn link_to_gnd(&mut self, component_name: &str, pin_name: &str) -> &mut Self {
+        self.link("POW", "GND", component_name, pin_name)
+    }
 
-            for pin in links.keys() {
-                comp.get_pin(pin).unwrap().set_context(ctx.clone());
+    pub fn build(&mut self) -> Result<Rc<Circuit>, EmulatorError> {
+        let c = Circuit {
+            pins: self.pins.clone(),
+            connections: self.connections.clone(),
+            components: self.components.take().unwrap(),
+        };
+
+        // QUESTION #3
+        // Is there a way to make it more elegant?
+        // I need to use Rc, as I need to pass the reference to the entire Circuit
+        // to the CircuitPinHandler handler. And there is RefCell, as
+        // on_pin_state_change requires mutable self
+        let cref = Rc::new(c);
+        let handler = Rc::new(RefCell::new(CircuitPinHandler(Rc::clone(&cref))));
+
+        for (key, rkey) in cref.connections.iter() {
+            let data = &cref.pins[key];
+            let component = (cref
+                .components
+                .get(&data.0)
+                .ok_or(EmulatorError::ComponentNotFound(data.0.clone()))?)
+            .borrow();
+            let pin = component
+                .get_pin(&data.1)
+                .ok_or(EmulatorError::PinNotFound(data.0.clone(), data.1.clone()))?;
+
+            // "injecting" handler to all pins
+            // QUESTION #4
+            // Achieving the same functionality without callback would, most likely,
+            // result in a cleaner code. But is there an alternative to it?
+            if pin.inner_id().is_none() {
+                pin.set_handler(Rc::clone(&handler) as Rc<RefCell<dyn PinStateChange>>)?;
+                pin.set_inner_id(*key);
             }
 
-            let tid = thread::Builder::new()
-                .name(name.clone())
-                .spawn(move || {
-                    comp.attach(ctx);
-                    comp.init();
-                    thread::sleep(Duration::from_millis(300));
-                    loop {
-                        let msg_res = comp.ctx().receiver.recv();
-                        if let Err(e) = msg_res {
-                            println!(
-                                "Reading msg failed in {} with {:?}",
-                                comp.ctx().component_name,
-                                e
-                            );
-                        }
-                        let msg = msg_res.unwrap();
-                        let pin = comp.get_pin(&msg.pin).unwrap();
-                        if pin.state() != msg.val {
-                            pin.set_val(msg.val);
-                            comp.on_pin_state_change(&msg.pin, msg.val);
-                        }
-                    }
-                })
-                .unwrap();
-
-            components.insert(
-                name.to_string(),
-                CircuitNode {
-                    sender: s,
-                    links,
-                    thread_handle: Some(tid),
-                },
-            );
+            let data = &cref.pins[rkey];
+            let component = cref.components[&data.0].borrow();
+            let pin = component
+                .get_pin(&data.1)
+                .ok_or(EmulatorError::PinNotFound(data.0.clone(), data.1.clone()))?;
+            pin.set_inner_id(*rkey);
         }
 
-        Circuit {
-            components,
-            receiver,
-            sender,
-            state: RefCell::new(false),
-        }
-    }
-}
-
-//--------------------------------------------------------------------
-// Circuit
-
-pub struct CircuitNode {
-    pub(crate) sender: Sender<PinMessage>,
-    pub(crate) links: HashMap<String, HashSet<(String, String)>>,
-    pub(crate) thread_handle: Option<thread::JoinHandle<()>>,
-}
-
-pub struct Circuit {
-    pub(crate) components: HashMap<String, CircuitNode>,
-    pub(crate) receiver: Receiver<PinMessage>,
-    pub(crate) sender: Sender<PinMessage>,
-    // FIXME use Oscilator (X1) instead
-    pub(crate) state: RefCell<bool>,
-}
-
-impl Circuit {
-    pub fn tick(&self) {
-        let val = *self.state.borrow();
-        *self.state.borrow_mut() = !val;
-        let sender = self.sender.clone();
-        thread::spawn(move || {
-            sender.send(PinMessage::new("X1", "OUT", val)).unwrap();
-        });
-    }
-
-    pub fn has_messages(&self) -> bool {
-        self.components.values().any(|x| { !x.sender.is_empty() })
+        Ok(cref)
     }
 }

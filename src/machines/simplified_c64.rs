@@ -1,12 +1,12 @@
 use std::{
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant}, rc::Rc,
 };
 
-use crossbeam_channel::{RecvTimeoutError, TryRecvError};
+use crossbeam_channel::{RecvTimeoutError };
 
 use crate::emulator::{
-    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine, PinMessage},
+    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine },
     components::{Oscilator, W24512ALogic, W24512A},
     cpus::W65C02,
     EmulatorError,
@@ -18,7 +18,7 @@ use crate::emulator::{
 /// Address bus pin A15 is unconnected, as the machine has only 32kB of RAM (one address pin less)
 /// In practice addresses pointing to the upper 32kB point in fact to the lower 32kB
 pub struct SimplifiedC64Machine {
-    circuit: Circuit,
+    circuit: Rc<Circuit>,
 }
 
 impl SimplifiedC64Machine {
@@ -49,31 +49,31 @@ impl SimplifiedC64Machine {
             // .link_to_vcc("U1", "NMI")
             // .link_to_vcc("U1", "RDY")
             // .link_to_vcc("U1", "BE")
-            .build();
+            .build().unwrap();
 
         Ok(SimplifiedC64Machine { circuit })
     }
 }
 
-static CYCLE: Duration = Duration::from_micros(1000);
+static CYCLE: Duration = Duration::from_micros(10);
 
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
-        thread::sleep(Duration::from_millis(800));
-        self.reset();
-        let mut cycle_duration = Instant::now();
+        // thread::sleep(Duration::from_millis(800));
+        // self.reset();
+        // let mut cycle_duration = Instant::now();
         loop {
             self.step();
-            if cycle_duration.elapsed() > CYCLE && !self.circuit.has_messages() {
-                self.circuit.tick();
-                cycle_duration = Instant::now();
-            }
+            // if cycle_duration.elapsed() > CYCLE && !self.circuit.has_messages() {
+            //     self.circuit.tick();
+            //     cycle_duration = Instant::now();
+            // }
             // thread::sleep(Duration::from_micros(1000));
         }
     }
 
     fn stop(&mut self) {
-        // let _ = self.circuit.write_to_pin("U1", "VCC", false);
+        self.circuit.write_to_pin("U1", "VCC", false).unwrap();
     }
 
     // W65C02 requires two cycles in high state on pin 40 (RST) to initialize or reset
@@ -89,24 +89,26 @@ impl Machine for SimplifiedC64Machine {
     }
 
     fn step(&self) {
+        self.circuit.with_pin("X1", "OUT", |pin|{ pin.toggle().unwrap(); });
+        // self.circuit.write_to_pin("X1", "OUT", false).unwrap();
         // let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
         // self.circuit.tick();
         // loop {
-        let res = self
-            .circuit
-            .receiver
-            .recv_timeout(Duration::from_micros(10));
-        if let Err(e) = res {
-            match e {
-                RecvTimeoutError::Timeout => {
-                    // println!("Timeout");
-                    return ();
-                }
-                _ => {
-                    println!("Message read error {:?}", e)
-                }
-            }
-        }
+        // let res = self
+        //     .circuit
+        //     .receiver
+        //     .recv_timeout(Duration::from_micros(10));
+        // if let Err(e) = res {
+        //     match e {
+        //         RecvTimeoutError::Timeout => {
+        //             // println!("Timeout");
+        //             return ();
+        //         }
+        //         _ => {
+        //             println!("Message read error {:?}", e)
+        //         }
+        //     }
+        // }
         //     match e {
         //         TryRecvError::Empty => {
         //             threshold -= 1;
@@ -120,15 +122,15 @@ impl Machine for SimplifiedC64Machine {
         //         }
         //     }
         // }
-        let msg = res.unwrap();
-        if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
-            for (comp, pin) in links.iter() {
-                self.circuit.components[comp]
-                    .sender
-                    .send(PinMessage::new(comp, pin, msg.val))
-                    .unwrap();
-            }
-        }
+        // let msg = res.unwrap();
+        // if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
+        //     for (comp, pin) in links.iter() {
+        //         self.circuit.components[comp]
+        //             .sender
+        //             .send(PinMessage::new(comp, pin, msg.val))
+        //             .unwrap();
+        //     }
+        // }
         // }
     }
 }

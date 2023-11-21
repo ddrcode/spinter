@@ -4,7 +4,7 @@ pub type Addr = u16;
 
 pub trait Addressable {
     fn read_byte(&self, addr: Addr) -> u8;
-    fn write_byte(&mut self, addr: Addr, value: u8);
+    fn write_byte(&self, addr: Addr, value: u8);
     fn address_width(&self) -> u16;
 
     fn read_byte_wrapping(&self, addr: Addr) -> Wrapping<u8> {

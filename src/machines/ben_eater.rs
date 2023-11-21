@@ -1,9 +1,9 @@
-use std::{thread, time::Duration};
+use std::{thread, time::Duration, rc::Rc};
 
 use crossbeam_channel::TryRecvError;
 
 use crate::emulator::{
-    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine, PinMessage},
+    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine },
     components::{HM62256BLogic, Oscilator, HM62256B},
     cpus::W65C02,
     EmulatorError,
@@ -15,7 +15,7 @@ use crate::emulator::{
 /// Address bus pin A15 is unconnected, as the machine has only 32kB of RAM (one address pin less)
 /// In practice addresses pointing to the upper 32kB point in fact to the lower 32kB
 pub struct BenEaterMachine {
-    circuit: Circuit,
+    circuit: Rc<Circuit>,
 }
 
 impl BenEaterMachine {
@@ -46,7 +46,7 @@ impl BenEaterMachine {
             // .link_to_vcc("U1", "NMI")
             // .link_to_vcc("U1", "RDY")
             // .link_to_vcc("U1", "BE")
-            .build();
+            .build().unwrap();
 
         Ok(BenEaterMachine { circuit })
     }
@@ -79,34 +79,34 @@ impl Machine for BenEaterMachine {
     }
 
     fn step(&self) {
-        let mut threshold = 10000;
-        self.circuit.tick();
-        loop {
-            let res = self.circuit.receiver.try_recv();
-            if let Err(e) = res {
-                match e {
-                    TryRecvError::Empty => {
-                        threshold -= 1;
-                        if threshold == 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    TryRecvError::Disconnected => {
-                        panic!("Channel disconnected");
-                    }
-                }
-            }
-            let msg = res.unwrap();
-            if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
-                for (comp, pin) in links.iter() {
-                    self.circuit.components[comp]
-                        .sender
-                        .send(PinMessage::new(comp, pin, msg.val))
-                        .unwrap();
-                }
-            }
-        }
+        // let mut threshold = 10000;
+        // self.circuit.tick();
+        // loop {
+        //     let res = self.circuit.receiver.try_recv();
+        //     if let Err(e) = res {
+        //         match e {
+        //             TryRecvError::Empty => {
+        //                 threshold -= 1;
+        //                 if threshold == 0 {
+        //                     break;
+        //                 }
+        //                 continue;
+        //             }
+        //             TryRecvError::Disconnected => {
+        //                 panic!("Channel disconnected");
+        //             }
+        //         }
+        //     }
+        //     let msg = res.unwrap();
+        //     if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
+        //         for (comp, pin) in links.iter() {
+        //             self.circuit.components[comp]
+        //                 .sender
+        //                 .send(PinMessage::new(comp, pin, msg.val))
+        //                 .unwrap();
+        //         }
+        //     }
+        // }
     }
 }
 
