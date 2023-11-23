@@ -1,16 +1,18 @@
 use std::{
+    cell::RefCell,
+    rc::Rc,
     thread,
-    time::{Duration, Instant}, rc::Rc,
+    time::{Duration, Instant},
 };
 
-use crossbeam_channel::{RecvTimeoutError };
+use crossbeam_channel::RecvTimeoutError;
 
-use crate::emulator::{
-    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine },
+use crate::{emulator::{
+    abstractions::{Addr, Addressable, Circuit, CircuitBuilder, Machine},
     components::{Oscilator, W24512ALogic, W24512A},
     cpus::W65C02,
     EmulatorError,
-};
+}, debugger::{Debugger, NullDebugger}};
 
 /// Implementation of a popular and simple W65C02-based breadboard computer designed by Ben Eater
 /// Details: https://eater.net/6502
@@ -23,18 +25,18 @@ pub struct SimplifiedC64Machine {
 
 impl SimplifiedC64Machine {
     pub fn new() -> Result<Self, EmulatorError> {
-        SimplifiedC64Machine::with_program(0x200, &[])
+        SimplifiedC64Machine::with_program_and_debugger(0x200, &[], Rc::new(NullDebugger))
     }
 
-    pub fn with_program(addr: Addr, data: &[u8]) -> Result<Self, EmulatorError> {
+    pub fn with_program_and_debugger(addr: Addr, data: &[u8], debugger: Rc<dyn Debugger>) -> Result<Self, EmulatorError> {
         let clock = Oscilator::new(1000);
         let mut ram = W24512A::new(W24512ALogic::new());
         let cpu = W65C02::new();
 
         // FIXME:
         // Trick: forcess the address of reset vector. (should be handled by ROM)
-        // ram.logic.write_byte(0xfffc, 0);
-        // ram.logic.write_byte(0xfffd, 2);
+        ram.logic.write_byte(0xfffd, 0xfc);
+        ram.logic.write_byte(0xfffc, 0xe2);
         ram.logic.load(addr, data);
 
         let circuit = CircuitBuilder::new()
@@ -49,26 +51,19 @@ impl SimplifiedC64Machine {
             // .link_to_vcc("U1", "NMI")
             // .link_to_vcc("U1", "RDY")
             // .link_to_vcc("U1", "BE")
-            .build().unwrap();
+            .set_debugger(debugger)
+            .build()?;
 
         Ok(SimplifiedC64Machine { circuit })
     }
 }
 
-static CYCLE: Duration = Duration::from_micros(10);
-
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
-        // thread::sleep(Duration::from_millis(800));
-        // self.reset();
-        // let mut cycle_duration = Instant::now();
-        loop {
+        self.reset();
+        // for _ in 0..3_500_000 {
+        for _ in 0..55 {
             self.step();
-            // if cycle_duration.elapsed() > CYCLE && !self.circuit.has_messages() {
-            //     self.circuit.tick();
-            //     cycle_duration = Instant::now();
-            // }
-            // thread::sleep(Duration::from_micros(1000));
         }
     }
 
@@ -88,49 +83,9 @@ impl Machine for SimplifiedC64Machine {
         // }
     }
 
-    fn step(&self) {
-        self.circuit.with_pin("X1", "OUT", |pin|{ pin.toggle().unwrap(); });
-        // self.circuit.write_to_pin("X1", "OUT", false).unwrap();
-        // let mut threshold = if *self.circuit.state.borrow() { 2000 } else { 5000 };
-        // self.circuit.tick();
-        // loop {
-        // let res = self
-        //     .circuit
-        //     .receiver
-        //     .recv_timeout(Duration::from_micros(10));
-        // if let Err(e) = res {
-        //     match e {
-        //         RecvTimeoutError::Timeout => {
-        //             // println!("Timeout");
-        //             return ();
-        //         }
-        //         _ => {
-        //             println!("Message read error {:?}", e)
-        //         }
-        //     }
-        // }
-        //     match e {
-        //         TryRecvError::Empty => {
-        //             threshold -= 1;
-        //             if threshold == 0 {//|| !*self.circuit.state.borrow() {
-        //                 break;
-        //             }
-        //             continue;
-        //         }
-        //         TryRecvError::Disconnected => {
-        //             panic!("Channel disconnected");
-        //         }
-        //     }
-        // }
-        // let msg = res.unwrap();
-        // if let Some(links) = &self.circuit.components[&msg.component].links.get(&msg.pin) {
-        //     for (comp, pin) in links.iter() {
-        //         self.circuit.components[comp]
-        //             .sender
-        //             .send(PinMessage::new(comp, pin, msg.val))
-        //             .unwrap();
-        //     }
-        // }
-        // }
+    fn step(&mut self) {
+        self.circuit.with_pin("X1", "OUT", |pin| {
+            pin.toggle().unwrap();
+        });
     }
 }

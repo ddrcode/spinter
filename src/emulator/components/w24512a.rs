@@ -1,9 +1,12 @@
-use crate::emulator::abstractions::{
-    Addr, Addressable, Component, Pin, PinBuilder, PinStateChange,
-    PinDirection::{self, *},
-    Pins, Port, RAM,
+use crate::{
+    debugger::{Debugger, NullDebugger, DebugMessage, MemCell},
+    emulator::abstractions::{
+        Addr, Addressable, Component, ComponentLogic, Pin, PinBuilder,
+        PinDirection::{self, *},
+        PinStateChange, Pins, Port, RAM,
+    },
 };
-use std::{rc::Rc, cell::RefCell};
+use std::{cell::RefCell, rc::Rc};
 use std::{collections::HashMap, fmt, ops::Index};
 
 //--------------------------------------------------------------------
@@ -69,7 +72,7 @@ impl W24512APins {
     pub fn new() -> Self {
         let pins: Vec<Rc<Pin>> = PinBuilder::new(32)
             .set(1, "NC1", Input)
-            .set(2, "NC1", Input)
+            .set(2, "NC2", Input)
             .with_ids(&ADDR_PINS)
             .group("A", 0)
             .direction(Input)
@@ -112,6 +115,10 @@ impl Pins for W24512APins {
     fn pins(&self) -> &[Rc<Pin>] {
         &self.pins
     }
+
+    fn by_name(&self, name: &str) -> Option<&Pin> {
+        self.pins_map.get(name).map(|pin| pin.as_ref())
+    }
 }
 
 impl Index<&str> for W24512APins {
@@ -140,11 +147,15 @@ impl fmt::Debug for W24512APins {
 
 pub struct W24512ALogic {
     data: RefCell<[u8; 1 << 16]>,
+    debugger: Rc<dyn Debugger>,
 }
 
 impl W24512ALogic {
     pub fn new() -> Self {
-        W24512ALogic { data: RefCell::new([0; 1 << 16]) }
+        W24512ALogic {
+            data: RefCell::new([0; 1 << 16]),
+            debugger: NullDebugger::as_rc(),
+        }
     }
 
     pub fn load(&mut self, addr: Addr, data: &[u8]) {
@@ -158,11 +169,21 @@ impl W24512ALogic {
 
 impl Addressable for W24512ALogic {
     fn read_byte(&self, addr: Addr) -> u8 {
-        self.data.borrow()[addr as usize]
+        let val = (*self.data.borrow())[addr as usize];
+        if addr == 0xd012 {
+            self.write_byte(0xd012, val.wrapping_add(1));
+        }
+        val
     }
 
     fn write_byte(&self, addr: Addr, value: u8) {
-        self.data.borrow_mut()[addr as usize] = value;
+        if self.debugger.enabled() {
+            self.debugger.debug(DebugMessage::MemCellUpdate(MemCell {
+                addr,
+                val: value,
+            }));
+        }
+        (*self.data.borrow_mut())[addr as usize] = value;
     }
 
     fn address_width(&self) -> u16 {
@@ -171,6 +192,12 @@ impl Addressable for W24512ALogic {
 }
 
 impl RAM for W24512ALogic {}
+
+impl ComponentLogic for W24512ALogic {
+    fn debugger(&self) -> &dyn Debugger {
+        self.debugger.as_ref()
+    }
+}
 
 //--------------------------------------------------------------------
 // MAIN STRUCT
@@ -183,10 +210,7 @@ pub struct W24512A<T: Addressable> {
 impl<T: RAM> W24512A<T> {
     pub fn new(logic: T) -> Self {
         let pins = Rc::new(W24512APins::new());
-        W24512A {
-            pins,
-            logic,
-        }
+        W24512A { pins, logic }
     }
 
     fn is_enabled(&self) -> bool {
@@ -241,11 +265,9 @@ impl<T: RAM + 'static> Component for W24512A<T> {
     fn get_pin(&self, name: &str) -> Option<&Pin> {
         self.pins.by_name(name)
     }
-
 }
 
 impl<T: RAM + 'static> PinStateChange for W24512A<T> {
-
     fn on_state_change(&self, pin: &Pin) {
         let val = pin.state();
         match pin.name().as_str() {

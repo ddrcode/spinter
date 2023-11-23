@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use self::macros::*;
 use crate::emulator::abstractions::PinDirection;
 use crate::emulator::cpus::mos6502::{AddressMode::*, Mnemonic, OperationDef};
@@ -6,7 +8,7 @@ use corosensei::Coroutine;
 
 use super::{execute_operation, AddressMode, Operand};
 
-pub type Input = CpuState;
+pub type Input = Rc<CpuState>;
 pub type Stepper = Coroutine<Input, (), StepperResult>;
 
 pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
@@ -38,22 +40,34 @@ pub fn get_stepper(op: &OperationDef) -> Option<Stepper> {
 
 pub fn init_stepper() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        // let lo = fetch_byte_from_addr!(yielder, cpu, 0xfc, 0xff);
-        // cpu.set_pcl(lo);
-        // let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
-        // cpu.set_pch(hi);
-        cpu.set_pc(0xfce2);
+        let lo = fetch_byte_from_addr!(yielder, cpu, 0xfc, 0xff);
+        cpu.set_pcl(lo);
+        let hi = fetch_byte_from_addr!(yielder, cpu, 0xfd, 0xff);
+        cpu.set_pch(hi);
+        // cpu.set_pc(0xfce2);
+        // cpu.set_pc(0xfce2);
+        // yielder.suspend(());
+        // yielder.suspend(());
         yielder.suspend(());
         StepperResult::partial(false, cpu)
     })
 }
 
+pub fn compensate() -> Stepper {
+    Coroutine::new(move |yielder, cpu: Input| {
+        yielder.suspend(());
+        yielder.suspend(());
+        StepperResult::partial(false, cpu)
+    })
+}
+
+
 pub fn read_opcode() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        request_opcode(&cpu);
+        request_opcode(Rc::clone(&cpu));
         yielder.suspend(());
 
-        read_opcode_and_inc_pc(&cpu);
+        read_opcode_and_inc_pc(Rc::clone(&cpu));
         yielder.suspend(());
 
         StepperResult::partial(true, cpu)
@@ -255,11 +269,11 @@ fn branch_stepper(op: OperationDef) -> Stepper {
         cpu.set_pcl(lo);
         yielder.suspend(());
 
-        request_opcode(&cpu);
+        request_opcode(Rc::clone(&cpu));
         yielder.suspend(());
 
         if cpu.pch() == hi {
-            read_opcode_and_inc_pc(&cpu);
+            read_opcode_and_inc_pc(Rc::clone(&cpu));
             yielder.suspend(());
             return StepperResult::new(true, cpu, opr);
         } else {
@@ -521,14 +535,13 @@ fn request_write_to_addr(cpu: &Input, lo: u8, hi: u8) {
         .write(addr);
 }
 
-fn request_opcode(cpu: &Input) {
+fn request_opcode(cpu: Input) {
     cpu.pins.set_sync(true);
     cpu.pins.set_data_direction(PinDirection::Input);
     cpu.pins.addr.write(cpu.pc());
 }
 
-fn read_opcode_and_inc_pc(cpu: &Input) -> u8 {
-    let cpu = cpu;
+fn read_opcode_and_inc_pc(cpu: Input) -> u8 {
     let opcode = cpu.pins.data.read();
     cpu.inc_pc();
     cpu.set_ir(opcode);

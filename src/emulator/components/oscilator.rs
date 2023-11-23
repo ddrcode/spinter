@@ -22,7 +22,7 @@ impl Oscilator {
 
 impl Tickable for Oscilator {
     fn tick(&self) {
-        self.pin.toggle().unwrap();
+        // self.pin.toggle().unwrap();
     }
 }
 

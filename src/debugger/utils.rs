@@ -4,18 +4,18 @@ use crate::{
 };
 use std::fmt::Write;
 
-use super::OperationDebug;
+use super::Operation;
 
-pub fn disassemble(op: &OperationDebug, verbose: bool, next_op: bool) -> String {
+pub fn disassemble(op: &Operation, verbose: bool, next_op: bool) -> String {
     let mut out = format!("[{:08}] ", op.cycle);
     let def = {
         let o = OPERATIONS.get(&op.opcode);
         if o.is_none() {
-            return format!("ERROR! Unknonw opcode {:#02x}", op.opcode);
+            return format!("ERROR! Unknown opcode {:#02x}", op.opcode);
         }
         o.unwrap()
     };
-    let addr_correction = if_else(next_op, 0u16, 1);
+    let addr_correction = if_else(next_op, 0u16, def.len().into());
     let addr = op.reg.pc.borrow().wrapping_sub(addr_correction);
     let val = operand_to_bytes_string(&op.operand);
     let opstr = op_to_string(&def, &op.operand);

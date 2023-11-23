@@ -1,10 +1,10 @@
-use std::{rc::Rc, ops::Index};
+use std::rc::Rc;
 
 use crate::utils::if_else;
 
 use super::Pin;
 
-pub trait Pins  {
+pub trait Pins {
     fn pins(&self) -> &[Rc<Pin>];
 
     fn size(&self) -> usize {
@@ -35,12 +35,13 @@ pub trait Pins  {
             });
     }
 
-}
-
-impl Index<&str> for dyn Pins {
-    type Output = Pin;
-
-    fn index(&self, name: &str) -> &Self::Output {
-        self.by_name(name).unwrap()
+    fn into_u128(&self) -> u128 {
+        let mut res: u128 = 0;
+        let mut i: u128 = 0;
+        for pin in self.pins() {
+            res |= (pin.val() as u128) << i;
+            i += 1;
+        }
+        res
     }
 }

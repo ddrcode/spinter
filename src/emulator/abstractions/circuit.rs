@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
-use crate::{emulator::EmulatorError, utils::if_else};
+use crate::{emulator::EmulatorError, utils::if_else, debugger::Debugger};
 
 use super::{Component, Pin, PinStateChange};
 
@@ -11,16 +11,16 @@ pub struct Circuit {
     // I use RefCell, because I need a mutable reference to
     // components - to call on_pin_state_change.
     // Are there any other ways to avoid it?
-    components: HashMap<String, RefCell<Box<dyn Component>>>,
+    components: HashMap<String, Box<dyn Component>>,
 }
 
 impl Circuit {
-    pub fn component(&self, name: &str) -> &RefCell<Box<dyn Component>> {
+    pub fn component(&self, name: &str) -> &Box<dyn Component> {
         &self.components[name]
     }
 
     pub fn with_pin(&self, component_name: &str, pin_name: &str, cb: impl FnOnce(&Pin)) {
-        let c = self.component(component_name).borrow();
+        let c = self.component(component_name);
         if let Some(pin) = c.get_pin(pin_name) {
             cb(pin);
         }
@@ -32,7 +32,7 @@ impl Circuit {
         pin_name: &str,
         val: bool,
     ) -> Result<bool, EmulatorError> {
-        let c = self.component(component_name).borrow();
+        let c = self.component(component_name);
         if let Some(pin) = c.get_pin(pin_name) {
             pin.write(val)
         } else {
@@ -61,21 +61,11 @@ impl PinStateChange for CircuitPinHandler {
             circuit.pins[&reader_id].clone()
         };
 
+        let component = &self.0.components[&component_id];
+        let rpin = component.get_pin(&reader_pin_name).unwrap();
+        rpin.set_val(pin.state());
 
-        let rpin = {
-            let c = self.0.components[&component_id].borrow();
-            let p = c.get_pin(&reader_pin_name).unwrap();
-            p.set_val(pin.state());
-            p.clone()
-        };
-
-        // Would be great if I could use hasmap's get_mut here,
-        // but I can't, because self.0 is a Rc<Circuit>
-        // QUESTION #2: is there any option to fix it?
-        let component = self.0.components[&component_id].borrow();
-        // println!("Reader pin: {}, {}", rpin.name(), rpin.inner_id().unwrap());
-
-        // println!("Updating compoent {}", component_id);
+        // println!("Updating pin {} => {}:{}   {},{}", pin.name(), component_id, rpin.name(), pin.state(), rpin.state());
         component.on_state_change(&rpin);
     }
 }
@@ -104,31 +94,33 @@ impl Component for Power {
     fn get_pin(&self, name: &str) -> Option<&Pin> {
         if_else(name == "VCC", Some(&self.vcc), None)
     }
+
 }
 
 impl PinStateChange for Power {
     fn on_state_change(&self, _pin: &Pin) {}
 }
 
-
 // --------------------------------------------------------------------
 // CircuitBuilder
 // Helps building circuits
 
 pub struct CircuitBuilder {
-    components: Option<HashMap<String, RefCell<Box<dyn Component>>>>,
+    components: Option<HashMap<String, Box<dyn Component>>>,
     pins: HashMap<u32, (String, String)>,
     last_pin_id: u32,
     connections: HashMap<u32, u32>,
+    debugger: Option<Rc<dyn Debugger>>
 }
 
 impl CircuitBuilder {
     pub fn new() -> Self {
         let mut cb = CircuitBuilder {
             components: Some(HashMap::new()),
-            pins: HashMap::new(),
             last_pin_id: 2,
             connections: HashMap::new(),
+            pins: HashMap::new(),
+            debugger: None
         };
 
         cb.add_component("POW", Power::new());
@@ -139,11 +131,28 @@ impl CircuitBuilder {
         self.components
             .as_mut()
             .unwrap()
-            .insert(name.to_string(), RefCell::new(Box::new(cmp)));
+            .insert(name.to_string(), Box::new(cmp));
         self
     }
 
+    fn has_pin(&self, component_name: &str, pin_name: &str) -> bool {
+        self.pins
+            .values()
+            .any(|(cn, pn)| cn == component_name && pn == pin_name)
+    }
+
+    fn get_pin_id(&self, component_name: &str, pin_name: &str) -> Option<u32> {
+        self.pins
+            .iter()
+            .find(|(_key, (cn, pn))| cn == component_name && pn == pin_name)
+            .map(|(key, _)| key)
+            .copied()
+    }
+
     fn add_pin(&mut self, component_name: &str, pin_name: &str) -> u32 {
+        if self.has_pin(component_name, pin_name) {
+            return self.get_pin_id(component_name, pin_name).unwrap();
+        }
         self.pins.insert(
             self.last_pin_id,
             (component_name.to_string(), pin_name.to_string()),
@@ -197,12 +206,21 @@ impl CircuitBuilder {
         self.link("POW", "GND", component_name, pin_name)
     }
 
+    pub fn set_debugger(&mut self, debugger:  Rc<dyn Debugger>) -> &mut Self {
+        self.debugger = Some(Rc::clone(&debugger));
+        self
+    }
+
     pub fn build(&mut self) -> Result<Rc<Circuit>, EmulatorError> {
-        let c = Circuit {
+        let mut c = Circuit {
             pins: self.pins.clone(),
             connections: self.connections.clone(),
             components: self.components.take().unwrap(),
         };
+
+        if let Some(debugger) = self.debugger.take() {
+            c.components.values_mut().for_each(|c| c.set_debugger(Rc::clone(&debugger)));
+        }
 
         // QUESTION #3
         // Is there a way to make it more elegant?
@@ -214,11 +232,10 @@ impl CircuitBuilder {
 
         for (key, rkey) in cref.connections.iter() {
             let data = &cref.pins[key];
-            let component = (cref
+            let component = cref
                 .components
                 .get(&data.0)
-                .ok_or(EmulatorError::ComponentNotFound(data.0.clone()))?)
-            .borrow();
+                .ok_or(EmulatorError::ComponentNotFound(data.0.clone()))?;
             let pin = component
                 .get_pin(&data.1)
                 .ok_or(EmulatorError::PinNotFound(data.0.clone(), data.1.clone()))?;
@@ -227,13 +244,13 @@ impl CircuitBuilder {
             // QUESTION #4
             // Achieving the same functionality without callback would, most likely,
             // result in a cleaner code. But is there an alternative to it?
-            if pin.inner_id().is_none() {
+            if !pin.has_handler() {
                 pin.set_handler(Rc::clone(&handler) as Rc<RefCell<dyn PinStateChange>>)?;
                 pin.set_inner_id(*key);
             }
 
             let data = &cref.pins[rkey];
-            let component = cref.components[&data.0].borrow();
+            let component = &cref.components[&data.0];
             let pin = component
                 .get_pin(&data.1)
                 .ok_or(EmulatorError::PinNotFound(data.0.clone(), data.1.clone()))?;

@@ -1,15 +1,17 @@
 #[macro_use]
 extern crate lazy_static;
 
+pub mod debugger;
 pub mod emulator;
 pub mod machines;
 pub mod utils;
-pub mod debugger;
 
 use anyhow::Result;
+use debugger::{ CliDebugger, Debugger };
 use emulator::abstractions::Machine;
 use machines::simplified_c64::SimplifiedC64Machine;
 use std::io::Read;
+use std::rc::Rc;
 use std::{fs::File, path::PathBuf};
 
 pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
@@ -20,7 +22,6 @@ pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
 }
 
 fn main() -> Result<()> {
-
     // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/add-sub-16bit.p"))?;
     // let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
     let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/kernal-64c.251913-01.bin"))?;
@@ -29,9 +30,16 @@ fn main() -> Result<()> {
     let blank = [0u8; 0x2000];
     let program = [basic, &blank, kernal].concat();
 
-    let mut be = SimplifiedC64Machine::with_program(0xa000, &program).unwrap();
+    let debugger = Rc::new(CliDebugger::default());
+
+    // let mut be = SimplifiedC64Machine::with_program(0x0200, &program)?;
+    let mut be = SimplifiedC64Machine::with_program_and_debugger(
+        0xa000,
+        &program,
+        Rc::clone(&debugger) as Rc<dyn Debugger>
+    )?;
     be.start();
+    debugger.print_screen_memory(0x0400, 40, 25);
 
     Ok(())
 }
-

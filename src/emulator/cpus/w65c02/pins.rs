@@ -4,6 +4,7 @@ use crate::emulator::abstractions::{
     Pins, Port,
 };
 use std::{ops::Index, rc::Rc};
+use std::collections::HashMap;
 
 /// ```text
 ///                W65C02
@@ -36,6 +37,7 @@ pub struct W65C02_Pins {
     pins: [Rc<Pin>; 40],
     pub data: Rc<Port<u8>>,
     pub addr: Rc<Port<u16>>,
+    pins_map: HashMap<String, Rc<Pin>>
 }
 
 impl W65C02_Pins {
@@ -80,12 +82,18 @@ impl W65C02_Pins {
             v1
         };
 
+        let mut pins_map = HashMap::with_capacity(40);
+        pins.iter().for_each(|pin|{
+            pins_map.insert(pin.name(), Rc::clone(pin));
+        });
+
         W65C02_Pins {
             pins: pins
                 .try_into()
                 .unwrap_or_else(|_| panic!("Must have 40 pins")),
             data: Port::from_pins(8, data),
             addr: Port::from_pins(16, addr),
+            pins_map
         }
     }
 
@@ -108,6 +116,10 @@ impl W65C02_Pins {
 impl Pins for W65C02_Pins {
     fn pins(&self) -> &[Rc<Pin>] {
         &self.pins
+    }
+
+    fn by_name(&self, name: &str) -> Option<&Pin> {
+        self.pins_map.get(name).map(|pin| pin.as_ref())
     }
 }
 

@@ -2,11 +2,13 @@ use corosensei::CoroutineResult;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::debugger::OperationDebug;
-use crate::emulator::abstractions::{CPUCycles, Component, Pin, PinStateChange, Pins};
+use crate::debugger::{DebugMessage, Debugger, NullDebugger, Operation, PinsState};
+use crate::emulator::abstractions::{
+    CPUCycles, Component, ComponentLogic, Pin, PinStateChange, Pins,
+};
 use crate::emulator::cpus::mos6502::{
-    get_stepper, init_stepper, mnemonic_from_opcode, read_opcode, Operand, OperationDef, Stepper,
-    OPERATIONS,
+    compensate, get_stepper, init_stepper, mnemonic_from_opcode, read_opcode, Operand,
+    OperationDef, Stepper, OPERATIONS,
 };
 
 use super::{CpuState, W65C02_Pins};
@@ -21,10 +23,7 @@ impl W65C02 {
     pub fn new() -> Self {
         let pins = Rc::new(W65C02_Pins::new());
         let logic = W65C02Logic::new(Rc::clone(&pins));
-        W65C02 {
-            pins,
-            logic,
-        }
+        W65C02 { pins, logic }
     }
 }
 
@@ -33,6 +32,9 @@ impl Component for W65C02 {
         self.pins.by_name(name)
     }
 
+    fn set_debugger(&mut self, debugger: Rc<dyn Debugger>) {
+        self.logic.debugger = debugger;
+    }
 }
 
 impl PinStateChange for W65C02 {
@@ -58,45 +60,56 @@ impl PinStateChange for W65C02 {
 pub struct W65C02Logic {
     stepper: RefCell<Stepper>,
     cycles: RefCell<CPUCycles>,
-    state: RefCell<CpuState>,
+    state: Rc<CpuState>,
+    debugger: Rc<dyn Debugger>,
 }
 
 impl W65C02Logic {
     pub fn new(pins: Rc<W65C02_Pins>) -> Self {
         let logic = W65C02Logic {
-            state: RefCell::new(CpuState::new(pins)),
+            state: Rc::new(CpuState::new(pins)),
             stepper: RefCell::new(init_stepper()),
             cycles: RefCell::new(0),
+            debugger: Rc::new(NullDebugger),
         };
 
         logic
     }
 
     pub fn tick(&self, phase: bool) {
-        let v = self.stepper.borrow_mut().resume(self.state.borrow().clone());
+        let v = self.stepper.borrow_mut().resume(Rc::clone(&self.state));
         match v {
-            CoroutineResult::Yield(()) => {}
+            CoroutineResult::Yield(()) => {
+                if phase == false {
+                    self.debug_pins();
+                }
+            }
             CoroutineResult::Return(res) => {
-                *self.state.borrow_mut() = res.cpu.into();
+                if phase == false {
+                    self.debug_pins();
+                }
                 if res.completed {
-                    self.debug(&res.operand);
+                    self.debug_operation(&res.operand);
                 }
                 *self.stepper.borrow_mut() = if res.has_opcode {
-                    let op = self.decode_op(&self.state.borrow().ir());
+                    let op = self.decode_op(&self.state.ir());
                     let s = get_stepper(&op);
                     if s.is_none() {
                         panic!(
                             "There is no stepper for current IR: {:#02x} (mnemonic: {:?})",
-                            self.state.borrow().ir(),
-                            mnemonic_from_opcode(self.state.borrow().ir())
+                            self.state.ir(),
+                            mnemonic_from_opcode(self.state.ir())
                         );
                     }
                     s.unwrap().into()
                 } else {
                     if phase != false {
-                        panic!("New instruction must start with phase high");
+                        println!("Compensating");
+                        compensate().into()
+                        // panic!("New instruction must start with phase high");
+                    } else {
+                        read_opcode().into()
                     }
-                    read_opcode().into()
                 }
             }
         }
@@ -108,7 +121,7 @@ impl W65C02Logic {
             None => panic!(
                 "Opcode {:#04x} not found at address {:#06x}",
                 opcode,
-                self.state.borrow().pc()
+                self.state.pc()
             ),
         }
     }
@@ -118,15 +131,33 @@ impl W65C02Logic {
         *self.cycles.borrow_mut() = val;
     }
 
-    fn debug(&self, operand: &Operand) {
-        let cpu = &self.state;
-        let s = OperationDebug {
-            reg: cpu.borrow().regs().clone(),
-            opcode: cpu.borrow().ir(),
-            operand: operand.clone(),
-            cycle: *self.cycles.borrow(),
-        };
-        println!("{}", s);
+    fn debug_operation(&self, operand: &Operand) {
+        if self.debugger.enabled() {
+            let cpu = &self.state;
+            let operation = Operation {
+                reg: cpu.regs().clone(),
+                opcode: cpu.ir(),
+                operand: operand.clone(),
+                cycle: *self.cycles.borrow(),
+            };
+            self.debugger.debug(DebugMessage::CpuOperation(operation));
+        }
+    }
+
+    fn debug_pins(&self) {
+        if self.debugger.enabled() {
+            self.debugger.debug(DebugMessage::PinsState(PinsState {
+                pins: self.state.pins.into_u128(),
+                width: 40,
+                cycle: *self.cycles.borrow(),
+            }));
+        }
+    }
+}
+
+impl ComponentLogic for W65C02Logic {
+    fn debugger(&self) -> &dyn Debugger {
+        self.debugger.as_ref()
     }
 }
 

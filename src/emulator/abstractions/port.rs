@@ -63,8 +63,10 @@ where
 
     pub fn read(&self) -> T {
         let mut s: T = T::zero();
+        let mut a = 0u16;
         for i in 0..self.width().into() {
             s |= (<T as NumCast>::from(self.pins[i].val())).unwrap() << i;
+            a |= (self.pins[i].val() as u16) << i;
         }
         s
     }

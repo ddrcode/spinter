@@ -17,7 +17,7 @@ pub trait Machine {
     fn start(&mut self);
     fn stop(&mut self);
     fn reset(&mut self);
-    fn step(&self);
+    fn step(&mut self);
 }
 
 //

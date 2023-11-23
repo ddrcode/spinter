@@ -78,7 +78,7 @@ impl Machine for BenEaterMachine {
         // }
     }
 
-    fn step(&self) {
+    fn step(&mut self) {
         // let mut threshold = 10000;
         // self.circuit.tick();
         // loop {

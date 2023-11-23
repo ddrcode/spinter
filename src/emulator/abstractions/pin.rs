@@ -63,6 +63,12 @@ impl Into<u8> for Pin {
     }
 }
 
+impl Into<u128> for Pin {
+    fn into(self) -> u128 {
+        self.state().into()
+    }
+}
+
 impl Pin {
     pub fn new(name: &str, direction: PinDirection, tri_state: bool, io: bool) -> Self {
         Pin {
@@ -102,6 +108,10 @@ impl Pin {
         self.handler
             .set(handler)
             .map_err(|_| EmulatorError::HandlerAlreadyDefined(self.name()))
+    }
+
+    pub(crate) fn has_handler(&self) -> bool {
+        self.handler.get().is_some()
     }
 
     pub fn set_enable(&self, val: bool) -> Result<(), EmulatorError> {
@@ -189,6 +199,9 @@ impl Pin {
             *self.value.borrow_mut() = val;
             if let Some(handler) = self.handler.get() {
                 handler.borrow().on_state_change(self);
+            }
+            else if self.group_name().is_some() && self.group_name().unwrap() == "D" {
+                println!(">>> No handler for pin {}", self.name());
             }
             Ok(true)
         } else {
