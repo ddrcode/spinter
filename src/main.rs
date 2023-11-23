@@ -22,7 +22,7 @@ pub fn get_file_as_byte_vec(filename: &PathBuf) -> Result<Vec<u8>> {
 }
 
 fn main() -> Result<()> {
-    // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/add-sub-16bit.p"))?;
+    // let program = get_file_as_byte_vec(&PathBuf::from(r"./tests/target/cmp.p"))?;
     // let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/64c.251913-01.bin"))?;
     let rom = get_file_as_byte_vec(&PathBuf::from(r"./rom/kernal-64c.251913-01.bin"))?;
     let kernal = &rom[8192..];
@@ -31,15 +31,19 @@ fn main() -> Result<()> {
     let program = [basic, &blank, kernal].concat();
 
     let debugger = Rc::new(CliDebugger::default());
+    // debugger.init_mem(0x200, &program);
+    debugger.enable();
 
     // let mut be = SimplifiedC64Machine::with_program(0x0200, &program)?;
     let mut be = SimplifiedC64Machine::with_program_and_debugger(
         0xa000,
+        // 0x0200,
         &program,
         Rc::clone(&debugger) as Rc<dyn Debugger>
     )?;
     be.start();
     debugger.print_screen_memory(0x0400, 40, 25);
+    // debugger.mem_dump(0..1024);
 
     Ok(())
 }

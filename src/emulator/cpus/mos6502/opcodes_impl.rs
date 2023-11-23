@@ -126,8 +126,7 @@ fn op_branch(cpu: &CpuState, op: &OperationDef, _val: u8) -> u8 {
 //     machine.irq();
 //     op.def.cycles
 // }
-//
-// TODO add cycle for page change
+
 fn op_compare(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
     let reg = match op.mnemonic {
         CMP => cpu.a(),
@@ -136,7 +135,7 @@ fn op_compare(cpu: &CpuState, op: &OperationDef, val: u8) -> u8 {
         _ => panic!("{} is not a compare operation", op.mnemonic),
     };
     let diff = reg.wrapping_sub(val);
-    set_flags("NZC", &[neg(diff), reg == val, reg >= val], cpu);
+    set_flags("NZC", &[neg(diff), reg == val, val <= reg], cpu);
     diff
 }
 

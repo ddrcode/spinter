@@ -1,5 +1,5 @@
 use crate::{
-    debugger::{Debugger, NullDebugger, DebugMessage, MemCell},
+    debugger::{DebugMessage, Debugger, MemCell, NullDebugger},
     emulator::abstractions::{
         Addr, Addressable, Component, ComponentLogic, Pin, PinBuilder,
         PinDirection::{self, *},
@@ -170,18 +170,13 @@ impl W24512ALogic {
 impl Addressable for W24512ALogic {
     fn read_byte(&self, addr: Addr) -> u8 {
         let val = (*self.data.borrow())[addr as usize];
-        if addr == 0xd012 {
-            self.write_byte(0xd012, val.wrapping_add(1));
-        }
         val
     }
 
     fn write_byte(&self, addr: Addr, value: u8) {
         if self.debugger.enabled() {
-            self.debugger.debug(DebugMessage::MemCellUpdate(MemCell {
-                addr,
-                val: value,
-            }));
+            self.debugger
+                .debug(DebugMessage::MemCellUpdate(MemCell { addr, val: value }));
         }
         (*self.data.borrow_mut())[addr as usize] = value;
     }
@@ -202,13 +197,13 @@ impl ComponentLogic for W24512ALogic {
 //--------------------------------------------------------------------
 // MAIN STRUCT
 
-pub struct W24512A<T: Addressable> {
+pub struct W24512A {
     pub pins: Rc<W24512APins>,
-    pub logic: T,
+    pub logic: W24512ALogic,
 }
 
-impl<T: RAM> W24512A<T> {
-    pub fn new(logic: T) -> Self {
+impl W24512A {
+    pub fn new(logic: W24512ALogic) -> Self {
         let pins = Rc::new(W24512APins::new());
         W24512A { pins, logic }
     }
@@ -261,15 +256,20 @@ impl<T: RAM> W24512A<T> {
     }
 }
 
-impl<T: RAM + 'static> Component for W24512A<T> {
+impl Component for W24512A {
     fn get_pin(&self, name: &str) -> Option<&Pin> {
         self.pins.by_name(name)
     }
+
+    fn set_debugger(&mut self, debugger: Rc<dyn Debugger>) {
+        self.logic.debugger = debugger;
+    }
 }
 
-impl<T: RAM + 'static> PinStateChange for W24512A<T> {
+impl PinStateChange for W24512A {
     fn on_state_change(&self, pin: &Pin) {
         let val = pin.state();
+        self.logic.write_byte(0xd012, self.logic.read_byte(0xd012).wrapping_add(1));
         match pin.name().as_str() {
             "C1" | "CS2" => self.set_enable(),
             "WE" => self.set_data_direction(val),
@@ -287,7 +287,7 @@ impl<T: RAM + 'static> PinStateChange for W24512A<T> {
     }
 }
 
-unsafe impl<T: RAM> Send for W24512A<T> {}
+unsafe impl Send for W24512A {}
 
 #[cfg(test)]
 mod tests {

@@ -37,6 +37,8 @@ impl SimplifiedC64Machine {
         // Trick: forcess the address of reset vector. (should be handled by ROM)
         ram.logic.write_byte(0xfffd, 0xfc);
         ram.logic.write_byte(0xfffc, 0xe2);
+        // ram.logic.write_byte(0xfffd, 0x02);
+        // ram.logic.write_byte(0xfffc, 0x00);
         ram.logic.load(addr, data);
 
         let circuit = CircuitBuilder::new()
@@ -61,8 +63,8 @@ impl SimplifiedC64Machine {
 impl Machine for SimplifiedC64Machine {
     fn start(&mut self) {
         self.reset();
-        // for _ in 0..3_500_000 {
-        for _ in 0..55 {
+        for _ in 0..10_500_000 {
+        // for _ in 0..5000 {
             self.step();
         }
     }

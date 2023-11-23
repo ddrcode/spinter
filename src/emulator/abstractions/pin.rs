@@ -193,9 +193,9 @@ impl Pin {
 
     pub fn write(&self, val: bool) -> Result<bool, EmulatorError> {
         if self.is_output() {
-            if *self.value.borrow() == val {
-                return Ok(false);
-            }
+            // if *self.value.borrow() == val {
+            //     return Ok(false);
+            // }
             *self.value.borrow_mut() = val;
             if let Some(handler) = self.handler.get() {
                 handler.borrow().on_state_change(self);

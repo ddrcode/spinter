@@ -61,7 +61,6 @@ pub fn compensate() -> Stepper {
     })
 }
 
-
 pub fn read_opcode() -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
         request_opcode(Rc::clone(&cpu));
@@ -148,7 +147,7 @@ fn no_mem_stepper(op: OperationDef) -> Stepper {
 
 fn read_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let (lo, hi) = decode_address!(yielder, cpu, op);
+        let (lo, hi, operand) = decode_address!(yielder, cpu, op);
 
         request_read_from_addr(&cpu, lo, hi);
         yielder.suspend(());
@@ -157,13 +156,13 @@ fn read_stepper(op: OperationDef) -> Stepper {
         execute_operation(&cpu, &op, val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu, get_addr_operand(&op.address_mode, lo, hi))
+        StepperResult::new(false, cpu, operand)
     })
 }
 
 fn write_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let (lo, hi) = decode_address!(yielder, cpu, op);
+        let (lo, hi, operand) = decode_address!(yielder, cpu, op);
 
         request_write_to_addr(&cpu, lo, hi);
         yielder.suspend(());
@@ -172,7 +171,7 @@ fn write_stepper(op: OperationDef) -> Stepper {
         cpu.pins.data.write(val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu, get_addr_operand(&op.address_mode, lo, hi))
+        StepperResult::new(false, cpu, operand)
     })
 }
 
@@ -191,20 +190,7 @@ fn write_stepper(op: OperationDef) -> Stepper {
 /// ```
 fn rmw_stepper(op: OperationDef) -> Stepper {
     Coroutine::new(move |yielder, cpu: Input| {
-        let opr: Operand;
-
-        request_read_from_pc!(yielder, cpu);
-        let lo = read_and_inc_pc!(yielder, cpu);
-
-        let hi = if op.address_mode == Absolute {
-            request_read_from_pc!(yielder, cpu);
-            let hi = read_and_inc_pc!(yielder, cpu);
-            opr = Operand::Word(u16::from_le_bytes([lo, hi]));
-            hi
-        } else {
-            opr = Operand::Byte(lo);
-            0
-        };
+        let (lo, hi, operand) = decode_address!(yielder, cpu, op);
 
         request_read_from_addr(&cpu, lo, hi);
         yielder.suspend(());
@@ -225,7 +211,7 @@ fn rmw_stepper(op: OperationDef) -> Stepper {
         cpu.pins.data.write(val);
         yielder.suspend(());
 
-        StepperResult::new(false, cpu, opr)
+        StepperResult::new(false, cpu, operand)
     })
 }
 
@@ -551,10 +537,8 @@ fn read_opcode_and_inc_pc(cpu: Input) -> u8 {
 
 fn get_addr_operand(am: &AddressMode, lo: u8, hi: u8) -> Operand {
     match am {
-        Absolute | AbsoluteX | AbsoluteY | Indirect | IndirectX | IndirectY => {
-            Operand::Word(u16::from_le_bytes([lo, hi]))
-        }
-        ZeroPage | ZeroPageX | ZeroPageY | Relative => Operand::Byte(lo),
+        Absolute | AbsoluteX | AbsoluteY | Indirect => Operand::Word(u16::from_le_bytes([lo, hi])),
+        ZeroPage | ZeroPageX | ZeroPageY | Relative | IndirectX | IndirectY => Operand::Byte(lo),
         Immediate | Implicit | Accumulator => Operand::None,
     }
 }
@@ -621,21 +605,21 @@ mod macros {
     }
 
     // multi-step macros
-
     macro_rules! decode_address {
         ($yielder: ident, $cpu: ident, $op: ident) => {{
             let lo = fetch_byte_and_inc_pc!($yielder, $cpu);
+            let mut hi = 0u8;
 
-            match $op.address_mode {
+            let (new_lo, new_hi) = match $op.address_mode {
                 ZeroPage => (lo, 0),
                 ZeroPageX => (lo.wrapping_add($cpu.x()), 0),
                 ZeroPageY => (lo.wrapping_add($cpu.y()), 0),
                 Absolute => {
-                    let hi = fetch_byte_and_inc_pc!($yielder, $cpu);
+                    hi = fetch_byte_and_inc_pc!($yielder, $cpu);
                     (lo, hi)
                 }
                 AbsoluteX | AbsoluteY => {
-                    let hi = fetch_byte_and_inc_pc!($yielder, $cpu);
+                    hi = fetch_byte_and_inc_pc!($yielder, $cpu);
                     let addr = u16::from_le_bytes([lo, hi]).wrapping_add(
                         if $op.address_mode == AbsoluteX {
                             $cpu.x().into()
@@ -653,6 +637,7 @@ mod macros {
                 }
                 IndirectX => {
                     let pointer = lo.wrapping_add($cpu.x());
+
                     let addr_lo = fetch_byte_from_addr!($yielder, $cpu, pointer, 0);
                     let addr_hi = fetch_byte_from_addr!($yielder, $cpu, pointer.wrapping_add(1), 0);
                     (addr_lo, addr_hi)
@@ -673,7 +658,9 @@ mod macros {
                     "Can't decode address for {:?} address mode",
                     $op.address_mode
                 ),
-            }
+            };
+
+            (new_lo, new_hi, get_addr_operand(&$op.address_mode, lo, hi))
         }};
     }
 
