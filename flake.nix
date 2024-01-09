@@ -71,8 +71,8 @@
           };
 
           packages = rec {
-            default = c64emu;
-            c64emu = projectCrate;
+            default = spinter;
+            spinter = projectCrate;
           };
 
           devShells.default = pkgs.mkShell {
@@ -112,7 +112,7 @@
           };
 
           overlayAttrs = {
-            inherit (self'.packages) c64emu;
+            inherit (self'.packages) spinter;
           };
         };
     };

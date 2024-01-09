@@ -28,7 +28,14 @@ impl Debugger for NullDebugger {
     }
 }
 
+#[derive(Default)]
+pub struct DebuggerConfig {
+    pub show_operations: bool,
+    pub show_pins_state: bool,
+}
+
 pub struct CliDebugger {
+    pub config: DebuggerConfig,
     state: DebuggerState,
     memory: RefCell<HashMap<Addr, u8>>,
 }
@@ -36,6 +43,7 @@ pub struct CliDebugger {
 impl Default for CliDebugger {
     fn default() -> Self {
         Self {
+            config: Default::default(),
             state: DebuggerState::default(),
             memory: RefCell::new(HashMap::with_capacity(1 << 16)),
         }
@@ -44,10 +52,12 @@ impl Default for CliDebugger {
 
 impl Debugger for CliDebugger {
     fn debug(&self, msg: DebugMessage) {
+        use DebugMessage::*;
         if self.enabled() {
             match msg {
-                // DebugMessage::CpuOperation(o) => println!("{o}"),
-                DebugMessage::MemCellUpdate(m) => {
+                CpuOperation(o) if self.config.show_operations => println!("{o}"),
+                PinsState(p) if self.config.show_pins_state => println!("{p}"),
+                MemCellUpdate(m) => {
                     self.memory.borrow_mut().insert(m.addr, m.val);
                 }
                 _ => (),
@@ -69,6 +79,13 @@ impl Debugger for CliDebugger {
 }
 
 impl CliDebugger {
+    pub fn new(config: DebuggerConfig) -> Self {
+        CliDebugger {
+            config,
+            ..Default::default()
+        }
+    }
+
     pub fn print_screen_memory(&self, addr: Addr, width: usize, height: usize) {
         let char_set: Vec<char> =
             "@abcdefghijklmnopqrstuvwxyz[£]↑← !\"#$%&'()*+,-./0123456789:;<=>?\

@@ -7,7 +7,7 @@ pub mod machines;
 pub mod utils;
 
 use anyhow::Result;
-use debugger::{ CliDebugger, Debugger };
+use debugger::{ CliDebugger, Debugger, DebuggerConfig };
 use emulator::abstractions::Machine;
 use machines::simplified_c64::SimplifiedC64Machine;
 use std::io::Read;
@@ -30,7 +30,10 @@ fn main() -> Result<()> {
     let blank = [0u8; 0x2000];
     let program = [basic, &blank, kernal].concat();
 
-    let debugger = Rc::new(CliDebugger::default());
+    let debugger = Rc::new(CliDebugger::new(DebuggerConfig {
+        show_operations: false,
+        show_pins_state: true,
+    }));
     // debugger.init_mem(0x200, &program);
     debugger.enable();
 
